@@ -1,4 +1,4 @@
-# BookStack Sync Plugin for Obsidian
+# NoteStack - BookStack Sync Plugin for Obsidian
 
 Bidirectional synchronization between BookStack and Obsidian. Intelligently syncs your BookStack books, chapters, and pages with smart conflict detection. Works on all platforms including Android.
 
@@ -306,7 +306,7 @@ Contributions are welcome via pull requests.
 
 ## Changelog
 
-### v1.0.0
+### v0.0.1
 - Initial release
 - Bidirectional sync with smart conflict detection
 - Three sync modes: Bidirectional, Pull-only, Push-only

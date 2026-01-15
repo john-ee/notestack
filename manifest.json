@@ -1,9 +1,9 @@
 {
 	"id": "notestack",
 	"name": "NoteStack",
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"minAppVersion": "0.15.0",
-	"description": "Synchronize books, chapters, and pages from BookStack to Obsidian.",
+	"description": "Synchronize books, chapters, and pages from BookStack to Obsidian. Supports Android and all platforms.",
 	"author": "john-ee",
 	"authorUrl": "https://github.com/john-ee",
 	"isDesktopOnly": false
