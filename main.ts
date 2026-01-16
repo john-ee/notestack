@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, TFolder, TFile, Modal, SecretComponent } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFolder, TFile, Modal, SecretComponent, requestUrl } from 'obsidian';
 
 interface BookStackSettings {
 	baseUrl: string;
@@ -9,6 +9,7 @@ interface BookStackSettings {
 	autoSync: boolean;
 	syncInterval: number;
 	syncMode: 'pull-only' | 'push-only' | 'bidirectional';
+	showDescriptionsInFrontmatter: boolean;
 }
 
 const DEFAULT_SETTINGS: BookStackSettings = {
@@ -19,7 +20,8 @@ const DEFAULT_SETTINGS: BookStackSettings = {
 	selectedBooks: [],
 	autoSync: false,
 	syncInterval: 60,
-	syncMode: 'bidirectional'
+	syncMode: 'bidirectional',
+	showDescriptionsInFrontmatter: true
 }
 
 interface Book {
@@ -42,6 +44,15 @@ interface BookContent {
 	slug: string;
 }
 
+interface Chapter {
+	id: number;
+	book_id: number;
+	name: string;
+	slug: string;
+	description: string;
+	pages?: Page[];
+}
+
 interface Page {
 	id: number;
 	book_id: number;
@@ -57,6 +68,12 @@ interface Page {
 interface PageFrontmatter {
 	title?: string;
 	bookstack_id?: number;
+	book_id?: number;
+	chapter_id?: number | null;
+	book_name?: string;
+	chapter_name?: string;
+	book_description?: string;
+	chapter_description?: string;
 	created?: string;
 	updated?: string;
 	last_synced?: string;
@@ -65,16 +82,19 @@ interface PageFrontmatter {
 export default class BookStackSyncPlugin extends Plugin {
 	settings: BookStackSettings;
 	syncIntervalId: number | null = null;
+	private isSyncing: boolean = false;
+
+	private get isMobile(): boolean {
+		return (this.app as any).isMobile ?? false;
+	}
 
 	async onload() {
 		await this.loadSettings();
 
-		// Add ribbon icon
 		this.addRibbonIcon('book-open', 'BookStack Sync', async () => {
 			await this.syncBooks();
 		});
 
-		// Add command to sync all books
 		this.addCommand({
 			id: 'sync-bookstack',
 			name: 'Sync BookStack Books',
@@ -83,7 +103,6 @@ export default class BookStackSyncPlugin extends Plugin {
 			}
 		});
 
-		// Add command to select books
 		this.addCommand({
 			id: 'select-books',
 			name: 'Select Books to Sync',
@@ -92,10 +111,16 @@ export default class BookStackSyncPlugin extends Plugin {
 			}
 		});
 
-		// Add settings tab
+		this.addCommand({
+			id: 'test-connection',
+			name: 'Test BookStack Connection',
+			callback: async () => {
+				await this.testConnection();
+			}
+		});
+
 		this.addSettingTab(new BookStackSettingTab(this.app, this));
 
-		// Setup auto-sync if enabled
 		if (this.settings.autoSync) {
 			this.startAutoSync();
 		}
@@ -132,15 +157,14 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 	}
 
-	getCredentials(): { tokenId: string | null, tokenSecret: string | null } {
-		const tokenId = this.app.secretStorage.get(this.settings.tokenIdSecret);
-		const tokenSecret = this.app.secretStorage.get(this.settings.tokenSecretSecret);
+	async getCredentials(): Promise<{ tokenId: string | null; tokenSecret: string | null }> {
+		const tokenId = await this.app.secretStorage.getSecret(this.settings.tokenIdSecret);
+		const tokenSecret = await this.app.secretStorage.getSecret(this.settings.tokenSecretSecret);
 		return { tokenId, tokenSecret };
 	}
 
 	async makeRequest(endpoint: string, method: string = 'GET', body?: any): Promise<any> {
-		const { tokenId, tokenSecret } = this.getCredentials();
-
+		const { tokenId, tokenSecret } = await this.getCredentials();
 		if (!tokenId || !tokenSecret) {
 			throw new Error('API credentials not configured. Please set up your BookStack API tokens in settings.');
 		}
@@ -148,27 +172,42 @@ export default class BookStackSyncPlugin extends Plugin {
 		const url = `${this.settings.baseUrl}/api/${endpoint}`;
 		const headers: Record<string, string> = {
 			'Authorization': `Token ${tokenId}:${tokenSecret}`,
-			'Content-Type': 'application/json'
+			'Accept': 'application/json'
 		};
 
-		const options: RequestInit = {
-			method,
-			headers
-		};
-
-		if (body && (method === 'PUT' || method === 'POST')) {
-			options.body = JSON.stringify(body);
+		if (body !== undefined) {
+			headers['Content-Type'] = 'application/json';
 		}
 
 		try {
-			const response = await fetch(url, options);
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
+			console.log(`[BookStack] ${method} ${url} via requestUrl`);
+			const res = await requestUrl({
+				url,
+				method,
+				headers,
+				body: body !== undefined ? JSON.stringify(body) : undefined,
+				throw: false
+			});
+
+			console.log(`[BookStack] Response status: ${res.status}`);
+
+			if (res.status < 200 || res.status >= 300) {
+				throw new Error(`HTTP ${res.status}: ${res.text}`);
 			}
-			return await response.json();
+
+			return res.json;
 		} catch (error) {
-			new Notice(`BookStack API Error: ${error.message}`);
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			const errorName = error instanceof Error ? error.name : 'Unknown';
+			const detailedError = `API Error [${errorName}]: ${errorMsg}`;
+			console.error(`[BookStack] ${detailedError}`, {
+				url,
+				method,
+				endpoint,
+				error,
+				platform: this.isMobile ? 'mobile' : 'desktop'
+			});
+			new Notice(`${detailedError}\n\nCheck console for details`);
 			throw error;
 		}
 	}
@@ -182,39 +221,62 @@ export default class BookStackSyncPlugin extends Plugin {
 		return await this.makeRequest(`books/${bookId}`);
 	}
 
+	async getChapter(chapterId: number): Promise<Chapter> {
+		return await this.makeRequest(`chapters/${chapterId}`);
+	}
+
 	async getPage(pageId: number): Promise<Page> {
 		return await this.makeRequest(`pages/${pageId}`);
+	}
+
+	async createPage(bookId: number, name: string, markdown: string, chapterId?: number): Promise<Page> {
+		const createData: any = {
+			book_id: bookId,
+			name: name,
+			markdown: markdown
+		};
+		if (chapterId) {
+			createData.chapter_id = chapterId;
+		}
+		return await this.makeRequest('pages', 'POST', createData);
 	}
 
 	async updatePage(pageId: number, content: string, name?: string): Promise<Page> {
 		const updateData: any = {
 			markdown: content
 		};
-
 		if (name) {
 			updateData.name = name;
 		}
-
 		return await this.makeRequest(`pages/${pageId}`, 'PUT', updateData);
 	}
 
 	async exportPageMarkdown(pageId: number): Promise<string> {
-		const { tokenId, tokenSecret } = this.getCredentials();
-
+		const { tokenId, tokenSecret } = await this.getCredentials();
 		if (!tokenId || !tokenSecret) {
 			throw new Error('API credentials not configured');
 		}
-
 		const url = `${this.settings.baseUrl}/api/pages/${pageId}/export/markdown`;
-		const headers = {
-			'Authorization': `Token ${tokenId}:${tokenSecret}`
-		};
-
-		const response = await fetch(url, { headers });
-		if (!response.ok) {
-			throw new Error(`Failed to export page ${pageId}`);
+		try {
+			console.log(`[BookStack] Exporting markdown for page ${pageId}`);
+			const res = await requestUrl({
+				url,
+				headers: {
+					'Authorization': `Token ${tokenId}:${tokenSecret}`,
+					'Accept': 'text/markdown, text/plain, */*'
+				},
+				throw: false
+			});
+			console.log(`[BookStack] Export response status: ${res.status}`);
+			if (res.status !== 200) {
+				throw new Error(`Failed to export page ${pageId}: HTTP ${res.status}`);
+			}
+			return res.text;
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			console.error(`[BookStack] Export markdown error: ${errorMsg}`, error);
+			throw error;
 		}
-		return await response.text();
 	}
 
 	extractFrontmatter(content: string): { frontmatter: PageFrontmatter; body: string } {
@@ -222,7 +284,6 @@ export default class BookStackSyncPlugin extends Plugin {
 		if (!match) {
 			return { frontmatter: {}, body: content };
 		}
-
 		const yamlText = match[1];
 		const body = match[2];
 		const frontmatter: PageFrontmatter = {};
@@ -230,14 +291,23 @@ export default class BookStackSyncPlugin extends Plugin {
 		yamlText.split('\n').forEach(line => {
 			const colonIndex = line.indexOf(':');
 			if (colonIndex === -1) return;
-
 			const key = line.substring(0, colonIndex).trim();
-			const value = line.substring(colonIndex + 1).trim();
+			let value = line.substring(colonIndex + 1).trim();
 
-			if (key === 'bookstack_id') {
-				frontmatter.bookstack_id = parseInt(value);
-			} else if (key === 'title' || key === 'created' || key === 'updated' || key === 'last_synced') {
-				frontmatter[key as keyof PageFrontmatter] = value as any;
+			// Remove quotes if present
+			if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
+				value = value.slice(1, -1);
+			}
+
+			if (key === 'bookstack_id' || key === 'book_id' || key === 'chapter_id') {
+				const num = parseInt(value);
+				if (!isNaN(num)) {
+					(frontmatter as any)[key] = num as any;
+				} else if (value === 'null' || value === '') {
+					(frontmatter as any)[key] = null as any;
+				}
+			} else if (['title', 'book_name', 'chapter_name', 'book_description', 'chapter_description', 'created', 'updated', 'last_synced'].includes(key)) {
+				(frontmatter as any)[key] = value as any;
 			}
 		});
 
@@ -245,88 +315,91 @@ export default class BookStackSyncPlugin extends Plugin {
 	}
 
 	createFrontmatter(metadata: PageFrontmatter): string {
-		return `---
-title: ${metadata.title || 'Untitled'}
-bookstack_id: ${metadata.bookstack_id || ''}
-created: ${metadata.created || ''}
-updated: ${metadata.updated || ''}
-last_synced: ${metadata.last_synced || ''}
----
+		let fm = '---\n';
+		fm += `title: ${metadata.title ?? 'Untitled'}\n`;
+		fm += `bookstack_id: ${metadata.bookstack_id ?? ''}\n`;
+		fm += `book_id: ${metadata.book_id ?? ''}\n`;
+		fm += `chapter_id: ${metadata.chapter_id !== undefined ? metadata.chapter_id : ''}\n`;
 
-`;
+		if (this.settings.showDescriptionsInFrontmatter) {
+			if (metadata.book_name) {
+				fm += `book_name: ${metadata.book_name}\n`;
+			}
+			if (metadata.book_description) {
+				fm += `book_description: "${metadata.book_description.replace(/"/g, '\\"')}"\n`;
+			}
+			if (metadata.chapter_name) {
+				fm += `chapter_name: ${metadata.chapter_name}\n`;
+			}
+			if (metadata.chapter_description) {
+				fm += `chapter_description: "${metadata.chapter_description.replace(/"/g, '\\"')}"\n`;
+			}
+		}
+
+		fm += `created: ${metadata.created ?? ''}\n`;
+		fm += `updated: ${metadata.updated ?? ''}\n`;
+		fm += `last_synced: ${metadata.last_synced ?? ''}\n`;
+		fm += '---\n\n';
+		return fm;
 	}
 
 	htmlToMarkdown(html: string): string {
 		let md = html;
-		
 		md = md.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n');
 		md = md.replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n');
 		md = md.replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n');
 		md = md.replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1\n');
 		md = md.replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1\n');
 		md = md.replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1\n');
-		
 		md = md.replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**');
 		md = md.replace(/<b[^>]*>(.*?)<\/b>/gi, '**$1**');
 		md = md.replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*');
 		md = md.replace(/<i[^>]*>(.*?)<\/i>/gi, '*$1*');
-		
 		md = md.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)');
-		
 		md = md.replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>/gi, '![$2]($1)');
 		md = md.replace(/<img[^>]*src="([^"]*)"[^>]*>/gi, '![]($1)');
-		
 		md = md.replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n');
 		md = md.replace(/<ul[^>]*>/gi, '\n');
 		md = md.replace(/<\/ul>/gi, '\n');
 		md = md.replace(/<ol[^>]*>/gi, '\n');
 		md = md.replace(/<\/ol>/gi, '\n');
-		
 		md = md.replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n');
-		
-		md = md.replace(/<pre[^>]*><code[^>]*>(.*?)<\/code><\/pre>/gis, '```\n$1\n```\n');
+		md = md.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gis, '```\n$1\n```\n');
 		md = md.replace(/<code[^>]*>(.*?)<\/code>/gi, '`$1`');
-		
-		md = md.replace(/<br\s*\/?>/gi, '\n');
-		
+		md = md.replace(/<br\s*\/?\>/gi, '\n');
 		md = md.replace(/<[^>]+>/g, '');
-		
-		md = md.replace(/&nbsp;/g, ' ');
-		md = md.replace(/&amp;/g, '&');
-		md = md.replace(/&lt;/g, '<');
-		md = md.replace(/&gt;/g, '>');
-		md = md.replace(/&quot;/g, '"');
-		
+		md = md.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
 		md = md.replace(/\n{3,}/g, '\n\n');
-		
 		return md.trim();
 	}
 
 	async syncBooks() {
+		if (this.isSyncing) {
+			new Notice('Sync already in progress...');
+			return;
+		}
 		if (!this.settings.baseUrl) {
 			new Notice('Please configure BookStack URL in settings');
 			return;
 		}
-
-		const { tokenId, tokenSecret } = this.getCredentials();
+		const { tokenId, tokenSecret } = await this.getCredentials();
 		if (!tokenId || !tokenSecret) {
 			new Notice('Please configure BookStack API credentials in settings');
 			return;
 		}
-
 		if (this.settings.selectedBooks.length === 0) {
 			new Notice('No books selected for sync. Use "Select Books to Sync" command.');
 			return;
 		}
 
+		this.isSyncing = true;
 		new Notice('Starting BookStack sync...');
-
 		try {
 			const syncFolder = this.settings.syncFolder;
 			await this.ensureFolderExists(syncFolder);
-
 			let pullCount = 0;
 			let pushCount = 0;
+			let createCount = 0;
 			let skipCount = 0;
 			let errorCount = 0;
 
@@ -334,167 +407,207 @@ last_synced: ${metadata.last_synced || ''}
 				const result = await this.syncBook(bookId, syncFolder);
 				pullCount += result.pulled;
 				pushCount += result.pushed;
+				createCount += result.created;
 				skipCount += result.skipped;
 				errorCount += result.errors;
 			}
 
-			const summary = [];
+			const summary: string[] = [];
+			if (createCount > 0) summary.push(`${createCount} created`);
 			if (pullCount > 0) summary.push(`${pullCount} pulled`);
 			if (pushCount > 0) summary.push(`${pushCount} pushed`);
 			if (skipCount > 0) summary.push(`${skipCount} skipped`);
 			if (errorCount > 0) summary.push(`${errorCount} errors`);
-
 			new Notice(`Sync complete: ${summary.join(', ')}`);
-		} catch (error) {
+		} catch (error: any) {
 			new Notice(`Sync failed: ${error.message}`);
 			console.error('BookStack sync error:', error);
+		} finally {
+			this.isSyncing = false;
 		}
 	}
 
-	async syncBook(bookId: number, basePath: string): Promise<{ pulled: number; pushed: number; skipped: number; errors: number }> {
-		let pulled = 0, pushed = 0, skipped = 0, errors = 0;
-
+	async syncBook(bookId: number, basePath: string): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
+		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const book = await this.getBook(bookId);
 			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
 			await this.ensureFolderExists(bookPath);
 
-			const bookReadme = `# ${book.name}\n\n${book.description || ''}\n\n`;
-			await this.createOrUpdateFile(`${bookPath}/README.md`, bookReadme);
-
 			for (const content of book.contents) {
 				if (content.type === 'chapter') {
-					const result = await this.syncChapter(content.id, bookPath);
+					const result = await this.syncChapter(content.id, bookPath, book as BookDetail);
 					pulled += result.pulled;
 					pushed += result.pushed;
+					created += result.created;
 					skipped += result.skipped;
 					errors += result.errors;
 				} else if (content.type === 'page') {
-					const result = await this.syncPage(content.id, bookPath);
+					const result = await this.syncPage(content.id, bookPath, book as BookDetail);
 					if (result === 'pulled') pulled++;
 					else if (result === 'pushed') pushed++;
+					else if (result === 'created') created++;
 					else if (result === 'skipped') skipped++;
 					else if (result === 'error') errors++;
 				}
+			}
+
+			if (this.settings.syncMode !== 'pull-only') {
+				const localResult = await this.syncLocalPages(bookPath, book as BookDetail);
+				created += localResult.created;
+				errors += localResult.errors;
 			}
 		} catch (error) {
 			console.error(`Failed to sync book ${bookId}:`, error);
 			errors++;
 		}
-
-		return { pulled, pushed, skipped, errors };
+		return { pulled, pushed, created, skipped, errors };
 	}
 
-	async syncChapter(chapterId: number, bookPath: string): Promise<{ pulled: number; pushed: number; skipped: number; errors: number }> {
-		let pulled = 0, pushed = 0, skipped = 0, errors = 0;
-
+	async syncChapter(chapterId: number, bookPath: string, book: BookDetail): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
+		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
-			const chapter = await this.makeRequest(`chapters/${chapterId}`);
+			const chapter = await this.getChapter(chapterId);
 			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
 			await this.ensureFolderExists(chapterPath);
 
-			const chapterReadme = `# ${chapter.name}\n\n${chapter.description || ''}\n\n`;
-			await this.createOrUpdateFile(`${chapterPath}/README.md`, chapterReadme);
-
 			if (chapter.pages) {
 				for (const page of chapter.pages) {
-					const result = await this.syncPage(page.id, chapterPath);
+					const result = await this.syncPage(page.id, chapterPath, book, chapter);
 					if (result === 'pulled') pulled++;
 					else if (result === 'pushed') pushed++;
+					else if (result === 'created') created++;
 					else if (result === 'skipped') skipped++;
 					else if (result === 'error') errors++;
 				}
+			}
+
+			if (this.settings.syncMode !== 'pull-only') {
+				const localResult = await this.syncLocalPages(chapterPath, book, chapter);
+				created += localResult.created;
+				errors += localResult.errors;
 			}
 		} catch (error) {
 			console.error(`Failed to sync chapter ${chapterId}:`, error);
 			errors++;
 		}
-
-		return { pulled, pushed, skipped, errors };
+		return { pulled, pushed, created, skipped, errors };
 	}
 
-	async syncPage(pageId: number, parentPath: string): Promise<'pulled' | 'pushed' | 'skipped' | 'error'> {
+	async syncLocalPages(folderPath: string, book: BookDetail, chapter?: Chapter): Promise<{ created: number; errors: number }> {
+		let created = 0;
+		let errors = 0;
+		try {
+			const folder = this.app.vault.getAbstractFileByPath(folderPath);
+			if (!(folder instanceof TFolder)) {
+				return { created, errors };
+			}
+			for (const file of folder.children) {
+				if (!(file instanceof TFile) || file.extension !== 'md') continue;
+				if (file.name === 'README.md') continue; // Skip README files
+
+				const content = await this.app.vault.read(file);
+				const { frontmatter, body } = this.extractFrontmatter(content);
+
+				if (!frontmatter.bookstack_id) {
+					try {
+						console.log(`Creating new page in BookStack: ${file.basename}`);
+						const newPage = await this.createPage(
+							book.id,
+							file.basename,
+							body,
+							chapter?.id
+						);
+
+						frontmatter.bookstack_id = newPage.id;
+						frontmatter.book_id = book.id;
+						frontmatter.chapter_id = chapter?.id ?? null;
+						frontmatter.book_name = (book as Book).name;
+						frontmatter.book_description = (book as Book).description;
+						if (chapter) {
+							frontmatter.chapter_name = chapter.name;
+							frontmatter.chapter_description = chapter.description;
+						}
+						frontmatter.created = newPage.created_at;
+						frontmatter.updated = newPage.updated_at;
+						frontmatter.last_synced = new Date().toISOString();
+						frontmatter.title = file.basename;
+
+						const updatedContent = this.createFrontmatter(frontmatter) + body;
+						await this.app.vault.modify(file, updatedContent);
+						new Notice(`Created page in BookStack: ${file.basename}`);
+						created++;
+					} catch (error) {
+						console.error(`Failed to create page ${file.basename}:`, error);
+						new Notice(`Failed to create page: ${file.basename}`);
+						errors++;
+					}
+				}
+			}
+		} catch (error) {
+			console.error(`Failed to sync local pages in ${folderPath}:`, error);
+			errors++;
+		}
+		return { created, errors };
+	}
+
+	async syncPage(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'> {
 		try {
 			const page = await this.getPage(pageId);
 			const fileName = `${this.sanitizeFileName(page.name)}.md`;
 			const filePath = `${parentPath}/${fileName}`;
 			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-
-			// Get remote timestamp
 			const remoteUpdated = new Date(page.updated_at);
 
 			if (existingFile instanceof TFile) {
-				// File exists - check timestamps to decide pull or push
 				const localContent = await this.app.vault.read(existingFile);
 				const { frontmatter, body } = this.extractFrontmatter(localContent);
-
 				const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
 				const localModified = new Date(existingFile.stat.mtime);
-
-				// Check if local file was modified after last sync
-				const hasLocalChanges = lastSynced && localModified > new Date(lastSynced.getTime() + 1000); // 1s buffer
+				const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + 1000));
 
 				if (this.settings.syncMode === 'pull-only') {
-					// Pull only mode
-					if (lastSynced && remoteUpdated <= lastSynced) {
-						console.log(`Skipping ${page.name} - already up to date`);
-						return 'skipped';
-					}
-					await this.pullPage(page, filePath);
+					if (lastSynced && remoteUpdated <= lastSynced) return 'skipped';
+					await this.pullPage(page, filePath, book, chapter);
 					return 'pulled';
-
 				} else if (this.settings.syncMode === 'push-only') {
-					// Push only mode
 					if (hasLocalChanges) {
 						await this.pushPage(page.id, body, page.name);
 						await this.updateLocalSyncTime(existingFile, frontmatter, body);
 						return 'pushed';
 					}
 					return 'skipped';
-
 				} else {
-					// Bidirectional mode
+					// Bidirectional
 					if (hasLocalChanges && lastSynced) {
-						// Local changes exist
 						if (remoteUpdated > lastSynced) {
-							// Both changed - conflict!
 							new Notice(`Conflict: ${page.name} changed in both places. Local changes preserved.`);
-							console.log(`Conflict on ${page.name}: remote=${remoteUpdated}, local=${localModified}, lastSync=${lastSynced}`);
 							return 'skipped';
 						} else {
-							// Only local changed - push
-							console.log(`Pushing ${page.name} to BookStack (local newer)`);
 							await this.pushPage(page.id, body, page.name);
 							await this.updateLocalSyncTime(existingFile, frontmatter, body);
 							return 'pushed';
 						}
 					} else {
-						// No local changes
 						if (!lastSynced || remoteUpdated > lastSynced) {
-							// Remote is newer - pull
-							console.log(`Pulling ${page.name} from BookStack (remote newer)`);
-							await this.pullPage(page, filePath);
+							await this.pullPage(page, filePath, book, chapter);
 							return 'pulled';
 						} else {
-							// Already in sync
 							return 'skipped';
 						}
 					}
 				}
-
 			} else {
-				// File doesn't exist locally - always pull
-				await this.pullPage(page, filePath);
+				await this.pullPage(page, filePath, book, chapter);
 				return 'pulled';
 			}
-
 		} catch (error) {
 			console.error(`Failed to sync page ${pageId}:`, error);
 			return 'error';
 		}
 	}
 
-	async pullPage(page: Page, filePath: string): Promise<void> {
+	async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter): Promise<void> {
 		let content = '';
 		try {
 			content = await this.exportPageMarkdown(page.id);
@@ -506,10 +619,19 @@ last_synced: ${metadata.last_synced || ''}
 		const metadata: PageFrontmatter = {
 			title: page.name,
 			bookstack_id: page.id,
+			book_id: book.id,
+			chapter_id: chapter?.id ?? null,
+			book_name: (book as Book).name,
+			book_description: (book as Book).description,
 			created: page.created_at,
 			updated: page.updated_at,
 			last_synced: new Date().toISOString()
 		};
+
+		if (chapter) {
+			metadata.chapter_name = chapter.name;
+			metadata.chapter_description = chapter.description;
+		}
 
 		const fullContent = this.createFrontmatter(metadata) + content;
 		await this.createOrUpdateFile(filePath, fullContent);
@@ -528,11 +650,9 @@ last_synced: ${metadata.last_synced || ''}
 	async ensureFolderExists(path: string) {
 		const folders = path.split('/');
 		let currentPath = '';
-
 		for (const folder of folders) {
 			currentPath = currentPath ? `${currentPath}/${folder}` : folder;
 			const folderExists = this.app.vault.getAbstractFileByPath(currentPath);
-			
 			if (!folderExists) {
 				await this.app.vault.createFolder(currentPath);
 			}
@@ -541,7 +661,6 @@ last_synced: ${metadata.last_synced || ''}
 
 	async createOrUpdateFile(path: string, content: string) {
 		const existingFile = this.app.vault.getAbstractFileByPath(path);
-		
 		if (existingFile instanceof TFile) {
 			await this.app.vault.modify(existingFile, content);
 		} else {
@@ -554,6 +673,76 @@ last_synced: ${metadata.last_synced || ''}
 			.replace(/[\\/:*?"<>|]/g, '-')
 			.replace(/\s+/g, ' ')
 			.trim();
+	}
+
+	async testConnection(): Promise<void> {
+		new Notice('Testing BookStack connection...');
+
+		if (!this.settings.baseUrl) {
+			new Notice('❌ BookStack URL is not configured');
+			return;
+		}
+
+		let tokenId: string | null;
+		let tokenSecret: string | null;
+		try {
+			({ tokenId, tokenSecret } = await this.getCredentials());
+		} catch (err) {
+			console.error('[BookStack] SecretStorage error', err);
+			new Notice('❌ Failed to read secrets from Obsidian SecretStorage');
+			return;
+		}
+		if (!tokenId || !tokenSecret) {
+			new Notice('❌ API credentials are missing or inaccessible');
+			return;
+		}
+
+		console.log('[BookStack] Test connection environment', {
+			baseUrl: this.settings.baseUrl,
+			isMobile: this.isMobile,
+			hasTokenId: !!tokenId,
+			hasTokenSecret: !!tokenSecret
+		});
+
+		try {
+			const start = performance.now();
+			const response = await this.makeRequest('books');
+			const duration = Math.round(performance.now() - start);
+			if (!response || !Array.isArray(response.data)) {
+				console.error('[BookStack] Unexpected API response', response);
+				new Notice('⚠️ Connected, but received an unexpected API response');
+				return;
+			}
+			new Notice(
+				`✅ Connection successful\n` +
+				`Books visible: ${response.data.length}\n` +
+				`Platform: ${this.isMobile ? 'Mobile' : 'Desktop'}\n` +
+				`Latency: ${duration} ms`
+			);
+			console.log('[BookStack] Connection test successful', {
+				bookCount: response.data.length,
+				latencyMs: duration
+			});
+		} catch (error: any) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error('[BookStack] Connection test failed', {
+				error,
+				isMobile: this.isMobile,
+				baseUrl: this.settings.baseUrl
+			});
+			let hint = '';
+			if (message.includes('Failed to fetch')) {
+				hint = 'Network request failed.\n' +
+					'• Check HTTPS certificate\n' +
+					'• Check CORS settings\n' +
+					'• Mobile apps require public HTTPS endpoints';
+			} else if (message.includes('401') || message.includes('403')) {
+				hint = 'Authentication failed.\n' +
+					'• Verify API token permissions\n' +
+					'• Ensure token belongs to a non-disabled user';
+			}
+			new Notice(`❌ Connection failed\n\n${message}${hint ? `\n\n${hint}` : ''}\n\nSee console for details`);
+		}
 	}
 }
 
@@ -571,40 +760,27 @@ class BookSelectionModal extends Modal {
 	async onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
-
 		contentEl.createEl('h2', { text: 'Select Books to Sync' });
-
 		const loadingEl = contentEl.createEl('p', { text: 'Loading books...' });
-
 		try {
 			this.books = await this.plugin.listBooks();
 			loadingEl.remove();
-
 			if (this.books.length === 0) {
 				contentEl.createEl('p', { text: 'No books found in your BookStack instance.' });
 				return;
 			}
-
 			const listEl = contentEl.createEl('div', { cls: 'book-list' });
-
 			for (const book of this.books) {
 				const itemEl = listEl.createEl('div', { cls: 'book-item' });
-				
 				const checkbox = itemEl.createEl('input', { type: 'checkbox' });
 				checkbox.checked = this.selectedBooks.has(book.id);
 				checkbox.addEventListener('change', () => {
-					if (checkbox.checked) {
-						this.selectedBooks.add(book.id);
-					} else {
-						this.selectedBooks.delete(book.id);
-					}
+					if (checkbox.checked) this.selectedBooks.add(book.id);
+					else this.selectedBooks.delete(book.id);
 				});
-
 				itemEl.createEl('label', { text: book.name });
 			}
-
 			const buttonContainer = contentEl.createEl('div', { cls: 'button-container' });
-			
 			const saveBtn = buttonContainer.createEl('button', { text: 'Save Selection' });
 			saveBtn.addEventListener('click', async () => {
 				this.plugin.settings.selectedBooks = Array.from(this.selectedBooks);
@@ -612,8 +788,7 @@ class BookSelectionModal extends Modal {
 				new Notice(`${this.selectedBooks.size} books selected for sync`);
 				this.close();
 			});
-
-		} catch (error) {
+		} catch (error: any) {
 			loadingEl.setText(`Error loading books: ${error.message}`);
 			console.error('Error loading books:', error);
 		}
@@ -636,7 +811,6 @@ class BookStackSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-
 		containerEl.createEl('h2', { text: 'BookStack Sync Settings' });
 
 		new Setting(containerEl)
@@ -648,7 +822,8 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.baseUrl = value.replace(/\/$/, '');
 					await this.plugin.saveSettings();
-				}));
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('API Token ID')
@@ -658,7 +833,8 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.tokenIdSecret = value;
 					await this.plugin.saveSettings();
-				}));
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('API Token Secret')
@@ -668,7 +844,8 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.tokenSecretSecret = value;
 					await this.plugin.saveSettings();
-				}));
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('Sync Folder')
@@ -679,7 +856,19 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.syncFolder = value;
 					await this.plugin.saveSettings();
-				}));
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Show Descriptions in Frontmatter')
+			.setDesc('Include book and chapter descriptions in page frontmatter instead of separate README files')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showDescriptionsInFrontmatter)
+				.onChange(async (value) => {
+					this.plugin.settings.showDescriptionsInFrontmatter = value;
+					await this.plugin.saveSettings();
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('Sync Mode')
@@ -692,7 +881,8 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.syncMode = value as any;
 					await this.plugin.saveSettings();
-				}));
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('Auto Sync')
@@ -702,12 +892,9 @@ class BookStackSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.autoSync = value;
 					await this.plugin.saveSettings();
-					if (value) {
-						this.plugin.startAutoSync();
-					} else {
-						this.plugin.stopAutoSync();
-					}
-				}));
+					if (value) this.plugin.startAutoSync(); else this.plugin.stopAutoSync();
+				})
+			);
 
 		new Setting(containerEl)
 			.setName('Sync Interval (minutes)')
@@ -720,11 +907,10 @@ class BookStackSettingTab extends PluginSettingTab {
 					if (!isNaN(num) && num > 0) {
 						this.plugin.settings.syncInterval = num;
 						await this.plugin.saveSettings();
-						if (this.plugin.settings.autoSync) {
-							this.plugin.startAutoSync();
-						}
+						if (this.plugin.settings.autoSync) this.plugin.startAutoSync();
 					}
-				}));
+				})
+			);
 
 		containerEl.createEl('h3', { text: 'How to get API credentials' });
 		containerEl.createEl('p', { text: '1. Log into your BookStack instance' });
@@ -732,23 +918,19 @@ class BookStackSettingTab extends PluginSettingTab {
 		containerEl.createEl('p', { text: '3. Scroll to "API Tokens" section' });
 		containerEl.createEl('p', { text: '4. Create a new token and copy the ID and Secret' });
 		containerEl.createEl('p', { text: '5. Use the dropdowns above to create new secrets or select existing ones' });
-		
+
 		containerEl.createEl('h3', { text: 'About Sync Modes' });
-		containerEl.createEl('p', { 
-			text: 'Bidirectional: Compares timestamps and syncs in the direction of the most recent change. If both changed, local is preserved.'
-		});
-		containerEl.createEl('p', { 
-			text: 'Pull Only: Only downloads changes from BookStack, never uploads local changes.'
-		});
-		containerEl.createEl('p', { 
-			text: 'Push Only: Only uploads local changes to BookStack, never downloads remote changes.'
-		});
-		
+		containerEl.createEl('p', { text: 'Bidirectional: Compares timestamps and syncs in the direction of the most recent change. If both changed, local is preserved. Creates new pages in BookStack when you add .md files locally.' });
+		containerEl.createEl('p', { text: 'Pull Only: Only downloads changes from BookStack, never uploads local changes or creates new pages.' });
+		containerEl.createEl('p', { text: 'Push Only: Only uploads local changes to BookStack and creates new pages from local .md files, never downloads remote changes.' });
+
+		containerEl.createEl('h3', { text: 'About Descriptions' });
+		containerEl.createEl('p', { text: 'When "Show Descriptions in Frontmatter" is enabled, book and chapter descriptions are stored in each page\'s frontmatter (book_description, chapter_description fields). This eliminates the need for separate README.md files and keeps all metadata with each page.' });
+
+		containerEl.createEl('h3', { text: 'Creating New Pages' });
+		containerEl.createEl('p', { text: 'To create a new page in BookStack: Simply create a new .md file in a book or chapter folder. During the next sync, the plugin will automatically create the page in BookStack and add the bookstack_id to the frontmatter.' });
+
 		containerEl.createEl('h3', { text: 'About SecretStorage' });
-		containerEl.createEl('p', { 
-			text: 'This plugin uses Obsidian\'s SecretStorage to securely store your API credentials. ' +
-			      'Secrets are stored separately from plugin settings and can be shared across multiple plugins. ' +
-			      'You can manage all your secrets in Settings → About → Manage secrets.'
-		});
+		containerEl.createEl('p', { text: 'This plugin uses Obsidian\'s SecretStorage to securely store your API credentials. Secrets are stored separately from plugin settings and can be shared across multiple plugins. You can manage all your secrets in Settings → About → Manage secrets.' });
 	}
 }
