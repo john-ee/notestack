@@ -205,4 +205,4 @@ MIT License
 
 ---
 
-**⚠️ Disclaimer:** This is an unofficial plugin. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
+**⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
