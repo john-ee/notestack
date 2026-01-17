@@ -22,7 +22,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 3. Install and enable
 
 ### Manual Installation
-1. Download `main.js`, `manifest.json`, `styles.css` from [latest release](https://github.com/yourusername/notestack/releases)
+1. Download `main.js`, `manifest.json`, `styles.css` from [latest release](https://github.com/john-ee/notestack/releases/)
 2. Create folder: `<vault>/.obsidian/plugins/notestack/`
 3. Copy files into folder
 4. Settings → Community Plugins → Enable "NoteStack"
@@ -199,7 +199,7 @@ MIT License
 
 ## Support
 
-- [Report Issues](https://github.com/yourusername/notestack/issues)
+- [Report Issues](https://github.com/john-ee/notestack/issues)
 - [BookStack API Docs](https://demo.bookstackapp.com/api/docs)
 - [Obsidian Plugin Docs](https://docs.obsidian.md/)
 
