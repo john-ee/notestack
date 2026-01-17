@@ -241,6 +241,15 @@ export default class BookStackSyncPlugin extends Plugin {
 		return await this.makeRequest('pages', 'POST', createData);
 	}
 
+	async createChapter(bookId: number, name: string, description?: string): Promise<Chapter> {
+		const createData: any = {
+			book_id: bookId,
+			name: name,
+			description: description || ''
+		};
+		return await this.makeRequest('chapters', 'POST', createData);
+	}
+
 	async updatePage(pageId: number, content: string, name?: string): Promise<Page> {
 		const updateData: any = {
 			markdown: content
@@ -502,6 +511,19 @@ export default class BookStackSyncPlugin extends Plugin {
 			if (!(folder instanceof TFolder)) {
 				return { created, errors };
 			}
+
+			// First, handle subdirectories (potential new chapters)
+			for (const item of folder.children) {
+				if (item instanceof TFolder) {
+					// This is a subfolder - check if it should be a chapter
+					// Only create chapters at the book level (not nested chapters)
+					if (!chapter) {
+						await this.handlePotentialNewChapter(item, book);
+					}
+				}
+			}
+
+			// Then handle files in this folder
 			for (const file of folder.children) {
 				if (!(file instanceof TFile) || file.extension !== 'md') continue;
 				if (file.name === 'README.md') continue; // Skip README files
@@ -549,6 +571,49 @@ export default class BookStackSyncPlugin extends Plugin {
 			errors++;
 		}
 		return { created, errors };
+	}
+
+	async handlePotentialNewChapter(folder: TFolder, book: BookDetail): Promise<void> {
+		// Check if this folder already corresponds to an existing chapter
+		const folderName = folder.name;
+		
+		// Look for any .md file in this folder that has chapter_id in frontmatter
+		let existingChapterId: number | null = null;
+		
+		for (const file of folder.children) {
+			if (file instanceof TFile && file.extension === 'md') {
+				const content = await this.app.vault.read(file);
+				const { frontmatter } = this.extractFrontmatter(content);
+				if (frontmatter.chapter_id) {
+					existingChapterId = frontmatter.chapter_id;
+					break;
+				}
+			}
+		}
+		
+		// If no chapter_id found, this might be a new chapter
+		if (!existingChapterId) {
+			try {
+				console.log(`Creating new chapter in BookStack: ${folderName}`);
+				const newChapter = await this.createChapter(book.id, folderName);
+				new Notice(`Created chapter in BookStack: ${folderName}`);
+				
+				// Now sync the pages in this new chapter
+				const chapterResult = await this.syncLocalPages(folder.path, book, newChapter);
+				console.log(`Synced ${chapterResult.created} pages in new chapter ${folderName}`);
+			} catch (error) {
+				console.error(`Failed to create chapter ${folderName}:`, error);
+				new Notice(`Failed to create chapter: ${folderName}`);
+			}
+		} else {
+			// Chapter already exists, sync its pages normally
+			try {
+				const chapter = await this.getChapter(existingChapterId);
+				await this.syncLocalPages(folder.path, book, chapter);
+			} catch (error) {
+				console.error(`Failed to sync existing chapter ${folderName}:`, error);
+			}
+		}
 	}
 
 	async syncPage(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'> {
