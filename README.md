@@ -26,7 +26,7 @@ Bidirectional synchronization between BookStack and Obsidian. Intelligently sync
 
 ### Manual Installation
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release
-2. Create a folder: `<vault>/.obsidian/plugins/bookstack-sync/`
+2. Create a folder: `<vault>/.obsidian/plugins/notestack/`
 3. Copy the downloaded files into this folder
 4. Reload Obsidian
 5. Enable the plugin in Settings → Community Plugins
@@ -43,6 +43,8 @@ Bidirectional synchronization between BookStack and Obsidian. Intelligently sync
 6. Copy the **Token ID** and **Token Secret** (shown only once!)
 
 **Important**: You need the "Access System API" permission assigned to your user role.
+
+**Disclaimer**: You are responsible for your obsidian notes and Bookstack in case of lost of content during sync.
 
 ### 2. Configure the Plugin
 

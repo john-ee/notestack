@@ -104,6 +104,40 @@ export default class BookStackSyncPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'pull-from-bookstack',
+			name: 'Pull from BookStack (Download only)',
+			callback: async () => {
+				if (this.isSyncing) {
+					new Notice('Sync already in progress...');
+					return;
+				}
+				this.isSyncing = true;
+				try {
+					await this.pullFromBookStack();
+				} finally {
+					this.isSyncing = false;
+				}
+			}
+		});
+
+		this.addCommand({
+			id: 'push-to-bookstack',
+			name: 'Push to BookStack (Upload only)',
+			callback: async () => {
+				if (this.isSyncing) {
+					new Notice('Sync already in progress...');
+					return;
+				}
+				this.isSyncing = true;
+				try {
+					await this.pushToBookStack();
+				} finally {
+					this.isSyncing = false;
+				}
+			}
+		});
+
+		this.addCommand({
 			id: 'select-books',
 			name: 'Select Books to Sync',
 			callback: () => {
@@ -402,32 +436,19 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 
 		this.isSyncing = true;
-		new Notice('Starting BookStack sync...');
+		
 		try {
-			const syncFolder = this.settings.syncFolder;
-			await this.ensureFolderExists(syncFolder);
-			let pullCount = 0;
-			let pushCount = 0;
-			let createCount = 0;
-			let skipCount = 0;
-			let errorCount = 0;
-
-			for (const bookId of this.settings.selectedBooks) {
-				const result = await this.syncBook(bookId, syncFolder);
-				pullCount += result.pulled;
-				pushCount += result.pushed;
-				createCount += result.created;
-				skipCount += result.skipped;
-				errorCount += result.errors;
+			switch (this.settings.syncMode) {
+				case 'pull-only':
+					await this.pullFromBookStack();
+					break;
+				case 'push-only':
+					await this.pushToBookStack();
+					break;
+				case 'bidirectional':
+					await this.bidirectionalSync();
+					break;
 			}
-
-			const summary: string[] = [];
-			if (createCount > 0) summary.push(`${createCount} created`);
-			if (pullCount > 0) summary.push(`${pullCount} pulled`);
-			if (pushCount > 0) summary.push(`${pushCount} pushed`);
-			if (skipCount > 0) summary.push(`${skipCount} skipped`);
-			if (errorCount > 0) summary.push(`${errorCount} errors`);
-			new Notice(`Sync complete: ${summary.join(', ')}`);
 		} catch (error: any) {
 			new Notice(`Sync failed: ${error.message}`);
 			console.error('BookStack sync error:', error);
@@ -436,7 +457,145 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 	}
 
-	async syncBook(bookId: number, basePath: string): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
+	async pullFromBookStack() {
+		new Notice('Pulling from BookStack...');
+		const syncFolder = this.settings.syncFolder;
+		await this.ensureFolderExists(syncFolder);
+		
+		let pullCount = 0;
+		let skipCount = 0;
+		let errorCount = 0;
+
+		for (const bookId of this.settings.selectedBooks) {
+			const result = await this.pullBook(bookId, syncFolder);
+			pullCount += result.pulled;
+			skipCount += result.skipped;
+			errorCount += result.errors;
+		}
+
+		const summary: string[] = [];
+		if (pullCount > 0) summary.push(`${pullCount} pulled`);
+		if (skipCount > 0) summary.push(`${skipCount} skipped`);
+		if (errorCount > 0) summary.push(`${errorCount} errors`);
+		new Notice(`Pull complete: ${summary.join(', ')}`);
+	}
+
+	async pushToBookStack() {
+		new Notice('Pushing to BookStack...');
+		const syncFolder = this.settings.syncFolder;
+		await this.ensureFolderExists(syncFolder);
+		
+		let pushCount = 0;
+		let createCount = 0;
+		let skipCount = 0;
+		let errorCount = 0;
+
+		for (const bookId of this.settings.selectedBooks) {
+			const result = await this.pushBook(bookId, syncFolder);
+			pushCount += result.pushed;
+			createCount += result.created;
+			skipCount += result.skipped;
+			errorCount += result.errors;
+		}
+
+		const summary: string[] = [];
+		if (createCount > 0) summary.push(`${createCount} created`);
+		if (pushCount > 0) summary.push(`${pushCount} pushed`);
+		if (skipCount > 0) summary.push(`${skipCount} skipped`);
+		if (errorCount > 0) summary.push(`${errorCount} errors`);
+		new Notice(`Push complete: ${summary.join(', ')}`);
+	}
+
+	async bidirectionalSync() {
+		new Notice('Starting bidirectional sync...');
+		const syncFolder = this.settings.syncFolder;
+		await this.ensureFolderExists(syncFolder);
+		
+		let pullCount = 0;
+		let pushCount = 0;
+		let createCount = 0;
+		let skipCount = 0;
+		let errorCount = 0;
+
+		for (const bookId of this.settings.selectedBooks) {
+			const result = await this.syncBookBidirectional(bookId, syncFolder);
+			pullCount += result.pulled;
+			pushCount += result.pushed;
+			createCount += result.created;
+			skipCount += result.skipped;
+			errorCount += result.errors;
+		}
+
+		const summary: string[] = [];
+		if (createCount > 0) summary.push(`${createCount} created`);
+		if (pullCount > 0) summary.push(`${pullCount} pulled`);
+		if (pushCount > 0) summary.push(`${pushCount} pushed`);
+		if (skipCount > 0) summary.push(`${skipCount} skipped`);
+		if (errorCount > 0) summary.push(`${errorCount} errors`);
+		new Notice(`Sync complete: ${summary.join(', ')}`);
+	}
+
+	async pullBook(bookId: number, basePath: string): Promise<{ pulled: number; skipped: number; errors: number }> {
+		let pulled = 0, skipped = 0, errors = 0;
+		try {
+			const book = await this.getBook(bookId);
+			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			await this.ensureFolderExists(bookPath);
+
+			for (const content of book.contents) {
+				if (content.type === 'chapter') {
+					const result = await this.pullChapter(content.id, bookPath, book as BookDetail);
+					pulled += result.pulled;
+					skipped += result.skipped;
+					errors += result.errors;
+				} else if (content.type === 'page') {
+					const result = await this.pullPageSync(content.id, bookPath, book as BookDetail);
+					if (result === 'pulled') pulled++;
+					else if (result === 'skipped') skipped++;
+					else if (result === 'error') errors++;
+				}
+			}
+		} catch (error) {
+			console.error(`Failed to pull book ${bookId}:`, error);
+			errors++;
+		}
+		return { pulled, skipped, errors };
+	}
+
+	async pushBook(bookId: number, basePath: string): Promise<{ pushed: number; created: number; skipped: number; errors: number }> {
+		let pushed = 0, created = 0, skipped = 0, errors = 0;
+		try {
+			const book = await this.getBook(bookId);
+			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			await this.ensureFolderExists(bookPath);
+
+			// First, push existing pages
+			for (const content of book.contents) {
+				if (content.type === 'chapter') {
+					const result = await this.pushChapter(content.id, bookPath, book as BookDetail);
+					pushed += result.pushed;
+					skipped += result.skipped;
+					errors += result.errors;
+				} else if (content.type === 'page') {
+					const result = await this.pushPageSync(content.id, bookPath, book as BookDetail);
+					if (result === 'pushed') pushed++;
+					else if (result === 'skipped') skipped++;
+					else if (result === 'error') errors++;
+				}
+			}
+
+			// Then, create new pages from local files
+			const localResult = await this.syncLocalPages(bookPath, book as BookDetail);
+			created += localResult.created;
+			errors += localResult.errors;
+		} catch (error) {
+			console.error(`Failed to push book ${bookId}:`, error);
+			errors++;
+		}
+		return { pushed, created, skipped, errors };
+	}
+
+	async syncBookBidirectional(bookId: number, basePath: string): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
 		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const book = await this.getBook(bookId);
@@ -445,14 +604,14 @@ export default class BookStackSyncPlugin extends Plugin {
 
 			for (const content of book.contents) {
 				if (content.type === 'chapter') {
-					const result = await this.syncChapter(content.id, bookPath, book as BookDetail);
+					const result = await this.syncChapterBidirectional(content.id, bookPath, book as BookDetail);
 					pulled += result.pulled;
 					pushed += result.pushed;
 					created += result.created;
 					skipped += result.skipped;
 					errors += result.errors;
 				} else if (content.type === 'page') {
-					const result = await this.syncPage(content.id, bookPath, book as BookDetail);
+					const result = await this.syncPageBidirectional(content.id, bookPath, book as BookDetail);
 					if (result === 'pulled') pulled++;
 					else if (result === 'pushed') pushed++;
 					else if (result === 'created') created++;
@@ -461,11 +620,10 @@ export default class BookStackSyncPlugin extends Plugin {
 				}
 			}
 
-			if (this.settings.syncMode !== 'pull-only') {
-				const localResult = await this.syncLocalPages(bookPath, book as BookDetail);
-				created += localResult.created;
-				errors += localResult.errors;
-			}
+			// Create new local pages
+			const localResult = await this.syncLocalPages(bookPath, book as BookDetail);
+			created += localResult.created;
+			errors += localResult.errors;
 		} catch (error) {
 			console.error(`Failed to sync book ${bookId}:`, error);
 			errors++;
@@ -473,7 +631,55 @@ export default class BookStackSyncPlugin extends Plugin {
 		return { pulled, pushed, created, skipped, errors };
 	}
 
-	async syncChapter(chapterId: number, bookPath: string, book: BookDetail): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
+	async pullChapter(chapterId: number, bookPath: string, book: BookDetail): Promise<{ pulled: number; skipped: number; errors: number }> {
+		let pulled = 0, skipped = 0, errors = 0;
+		try {
+			const chapter = await this.getChapter(chapterId);
+			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			await this.ensureFolderExists(chapterPath);
+
+			if (chapter.pages) {
+				for (const page of chapter.pages) {
+					const result = await this.pullPageSync(page.id, chapterPath, book, chapter);
+					if (result === 'pulled') pulled++;
+					else if (result === 'skipped') skipped++;
+					else if (result === 'error') errors++;
+				}
+			}
+		} catch (error) {
+			console.error(`Failed to pull chapter ${chapterId}:`, error);
+			errors++;
+		}
+		return { pulled, skipped, errors };
+	}
+
+	async pushChapter(chapterId: number, bookPath: string, book: BookDetail): Promise<{ pushed: number; skipped: number; errors: number }> {
+		let pushed = 0, skipped = 0, errors = 0;
+		try {
+			const chapter = await this.getChapter(chapterId);
+			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			await this.ensureFolderExists(chapterPath);
+
+			if (chapter.pages) {
+				for (const page of chapter.pages) {
+					const result = await this.pushPageSync(page.id, chapterPath, book, chapter);
+					if (result === 'pushed') pushed++;
+					else if (result === 'skipped') skipped++;
+					else if (result === 'error') errors++;
+				}
+			}
+
+			// Create new pages from local files
+			const localResult = await this.syncLocalPages(chapterPath, book, chapter);
+			errors += localResult.errors;
+		} catch (error) {
+			console.error(`Failed to push chapter ${chapterId}:`, error);
+			errors++;
+		}
+		return { pushed, skipped, errors };
+	}
+
+	async syncChapterBidirectional(chapterId: number, bookPath: string, book: BookDetail): Promise<{ pulled: number; pushed: number; created: number; skipped: number; errors: number }> {
 		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const chapter = await this.getChapter(chapterId);
@@ -482,7 +688,7 @@ export default class BookStackSyncPlugin extends Plugin {
 
 			if (chapter.pages) {
 				for (const page of chapter.pages) {
-					const result = await this.syncPage(page.id, chapterPath, book, chapter);
+					const result = await this.syncPageBidirectional(page.id, chapterPath, book, chapter);
 					if (result === 'pulled') pulled++;
 					else if (result === 'pushed') pushed++;
 					else if (result === 'created') created++;
@@ -491,11 +697,10 @@ export default class BookStackSyncPlugin extends Plugin {
 				}
 			}
 
-			if (this.settings.syncMode !== 'pull-only') {
-				const localResult = await this.syncLocalPages(chapterPath, book, chapter);
-				created += localResult.created;
-				errors += localResult.errors;
-			}
+			// Create new local pages
+			const localResult = await this.syncLocalPages(chapterPath, book, chapter);
+			created += localResult.created;
+			errors += localResult.errors;
 		} catch (error) {
 			console.error(`Failed to sync chapter ${chapterId}:`, error);
 			errors++;
@@ -616,7 +821,64 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 	}
 
-	async syncPage(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'> {
+
+	async pullPageSync(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'skipped' | 'error'> {
+		try {
+			const page = await this.getPage(pageId);
+			const fileName = `${this.sanitizeFileName(page.name)}.md`;
+			const filePath = `${parentPath}/${fileName}`;
+			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+			const remoteUpdated = new Date(page.updated_at);
+
+			if (existingFile instanceof TFile) {
+				const localContent = await this.app.vault.read(existingFile);
+				const { frontmatter } = this.extractFrontmatter(localContent);
+				const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
+
+				if (lastSynced && remoteUpdated <= lastSynced) {
+					return 'skipped';
+				}
+			}
+
+			await this.pullPage(page, filePath, book, chapter);
+			return 'pulled';
+		} catch (error) {
+			console.error(`Failed to pull page ${pageId}:`, error);
+			return 'error';
+		}
+	}
+
+	async pushPageSync(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pushed' | 'skipped' | 'error'> {
+		try {
+			const page = await this.getPage(pageId);
+			const fileName = `${this.sanitizeFileName(page.name)}.md`;
+			const filePath = `${parentPath}/${fileName}`;
+			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+
+			if (!(existingFile instanceof TFile)) {
+				return 'skipped'; // No local file to push
+			}
+
+			const localContent = await this.app.vault.read(existingFile);
+			const { frontmatter, body } = this.extractFrontmatter(localContent);
+			const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
+			const localModified = new Date(existingFile.stat.mtime);
+			const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + 1000));
+
+			if (hasLocalChanges) {
+				await this.pushPage(page.id, body, page.name);
+				await this.updateLocalSyncTime(existingFile, frontmatter, body);
+				return 'pushed';
+			}
+
+			return 'skipped';
+		} catch (error) {
+			console.error(`Failed to push page ${pageId}:`, error);
+			return 'error';
+		}
+	}
+
+	async syncPageBidirectional(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'> {
 		try {
 			const page = await this.getPage(pageId);
 			const fileName = `${this.sanitizeFileName(page.name)}.md`;
@@ -631,35 +893,21 @@ export default class BookStackSyncPlugin extends Plugin {
 				const localModified = new Date(existingFile.stat.mtime);
 				const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + 1000));
 
-				if (this.settings.syncMode === 'pull-only') {
-					if (lastSynced && remoteUpdated <= lastSynced) return 'skipped';
-					await this.pullPage(page, filePath, book, chapter);
-					return 'pulled';
-				} else if (this.settings.syncMode === 'push-only') {
-					if (hasLocalChanges) {
+				if (hasLocalChanges && lastSynced) {
+					if (remoteUpdated > lastSynced) {
+						new Notice(`Conflict: ${page.name} changed in both places. Local changes preserved.`);
+						return 'skipped';
+					} else {
 						await this.pushPage(page.id, body, page.name);
 						await this.updateLocalSyncTime(existingFile, frontmatter, body);
 						return 'pushed';
 					}
-					return 'skipped';
 				} else {
-					// Bidirectional
-					if (hasLocalChanges && lastSynced) {
-						if (remoteUpdated > lastSynced) {
-							new Notice(`Conflict: ${page.name} changed in both places. Local changes preserved.`);
-							return 'skipped';
-						} else {
-							await this.pushPage(page.id, body, page.name);
-							await this.updateLocalSyncTime(existingFile, frontmatter, body);
-							return 'pushed';
-						}
+					if (!lastSynced || remoteUpdated > lastSynced) {
+						await this.pullPage(page, filePath, book, chapter);
+						return 'pulled';
 					} else {
-						if (!lastSynced || remoteUpdated > lastSynced) {
-							await this.pullPage(page, filePath, book, chapter);
-							return 'pulled';
-						} else {
-							return 'skipped';
-						}
+						return 'skipped';
 					}
 				}
 			} else {
