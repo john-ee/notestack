@@ -91,7 +91,7 @@ export default class BookStackSyncPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		this.addRibbonIcon('book-open', 'BookStack Sync', async () => {
+		this.addRibbonIcon('folder-sync', 'BookStack Sync', async () => {
 			await this.syncBooks();
 		});
 
@@ -895,14 +895,53 @@ export default class BookStackSyncPlugin extends Plugin {
 
 				if (hasLocalChanges && lastSynced) {
 					if (remoteUpdated > lastSynced) {
-						new Notice(`Conflict: ${page.name} changed in both places. Local changes preserved.`);
-						return 'skipped';
+						// CONFLICT DETECTED - Show resolution modal
+						const remoteContent = await this.getRemotePageContent(page);
+						
+						return new Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'>((resolve) => {
+							const modal = new ConflictResolutionModal(
+								this.app,
+								this,
+								page.name,
+								body,
+								remoteContent,
+								localModified,
+								remoteUpdated,
+								async (choice) => {
+									try {
+										if (choice === 'local') {
+											// User chose to keep local - push to BookStack
+											await this.pushPage(page.id, body, page.name);
+											await this.updateLocalSyncTime(existingFile, frontmatter, body);
+											new Notice(`✅ Pushed local version of: ${page.name}`);
+											resolve('pushed');
+										} else if (choice === 'remote') {
+											// User chose to keep remote - pull from BookStack
+											await this.pullPage(page, filePath, book, chapter);
+											new Notice(`✅ Pulled remote version of: ${page.name}`);
+											resolve('pulled');
+										} else {
+											// User chose to skip
+											new Notice(`⏭️ Skipped conflict: ${page.name}`);
+											resolve('skipped');
+										}
+									} catch (error) {
+										console.error(`Error resolving conflict for ${page.name}:`, error);
+										new Notice(`❌ Error resolving conflict: ${page.name}`);
+										resolve('error');
+									}
+								}
+							);
+							modal.open();
+						});
 					} else {
+						// Local is newer, push
 						await this.pushPage(page.id, body, page.name);
 						await this.updateLocalSyncTime(existingFile, frontmatter, body);
 						return 'pushed';
 					}
 				} else {
+					// No local changes, pull if remote is newer
 					if (!lastSynced || remoteUpdated > lastSynced) {
 						await this.pullPage(page, filePath, book, chapter);
 						return 'pulled';
@@ -911,6 +950,7 @@ export default class BookStackSyncPlugin extends Plugin {
 					}
 				}
 			} else {
+				// File doesn't exist locally, pull it
 				await this.pullPage(page, filePath, book, chapter);
 				return 'pulled';
 			}
@@ -948,6 +988,15 @@ export default class BookStackSyncPlugin extends Plugin {
 
 		const fullContent = this.createFrontmatter(metadata) + content;
 		await this.createOrUpdateFile(filePath, fullContent);
+	}
+
+	async getRemotePageContent(page: Page): Promise<string> {
+		try {
+			return await this.exportPageMarkdown(page.id);
+		} catch (error) {
+			console.log(`Markdown export failed for page ${page.id}, converting HTML`);
+			return this.htmlToMarkdown(page.html);
+		}
 	}
 
 	async pushPage(pageId: number, content: string, name: string): Promise<void> {
@@ -1113,6 +1162,107 @@ class BookSelectionModal extends Modal {
 	}
 }
 
+class ConflictResolutionModal extends Modal {
+	plugin: BookStackSyncPlugin;
+	pageName: string;
+	localContent: string;
+	remoteContent: string;
+	localModified: Date;
+	remoteModified: Date;
+	onResolve: (choice: 'local' | 'remote' | 'skip') => void;
+
+	constructor(
+		app: App,
+		plugin: BookStackSyncPlugin,
+		pageName: string,
+		localContent: string,
+		remoteContent: string,
+		localModified: Date,
+		remoteModified: Date,
+		onResolve: (choice: 'local' | 'remote' | 'skip') => void
+	) {
+		super(app);
+		this.plugin = plugin;
+		this.pageName = pageName;
+		this.localContent = localContent;
+		this.remoteContent = remoteContent;
+		this.localModified = localModified;
+		this.remoteModified = remoteModified;
+		this.onResolve = onResolve;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('bookstack-conflict-modal');
+
+		contentEl.createEl('h2', { text: '⚠️ Sync Conflict Detected' });
+		contentEl.createEl('p', { 
+			text: `The page "${this.pageName}" has been modified in both Obsidian and BookStack.`,
+			cls: 'conflict-description'
+		});
+
+		// Timestamps comparison
+		const timingEl = contentEl.createEl('div', { cls: 'conflict-timing' });
+		timingEl.createEl('p', { text: `Local modified: ${this.localModified.toLocaleString()}` });
+		timingEl.createEl('p', { text: `Remote modified: ${this.remoteModified.toLocaleString()}` });
+
+		// Preview sections
+		const previewContainer = contentEl.createEl('div', { cls: 'conflict-preview-container' });
+
+		// Local preview
+		const localPreview = previewContainer.createEl('div', { cls: 'conflict-preview' });
+		localPreview.createEl('h3', { text: '📝 Local Version (Obsidian)' });
+		const localPre = localPreview.createEl('pre', { cls: 'conflict-content' });
+		localPre.textContent = this.truncateContent(this.localContent);
+
+		// Remote preview
+		const remotePreview = previewContainer.createEl('div', { cls: 'conflict-preview' });
+		remotePreview.createEl('h3', { text: '☁️ Remote Version (BookStack)' });
+		const remotePre = remotePreview.createEl('pre', { cls: 'conflict-content' });
+		remotePre.textContent = this.truncateContent(this.remoteContent);
+
+		// Buttons
+		const buttonContainer = contentEl.createEl('div', { cls: 'conflict-buttons' });
+
+		const keepLocalBtn = buttonContainer.createEl('button', { 
+			text: '⬆️ Keep Local (Push to BookStack)',
+			cls: 'mod-cta'
+		});
+		keepLocalBtn.addEventListener('click', () => {
+			this.onResolve('local');
+			this.close();
+		});
+
+		const keepRemoteBtn = buttonContainer.createEl('button', { 
+			text: '⬇️ Keep Remote (Pull from BookStack)',
+			cls: 'mod-warning'
+		});
+		keepRemoteBtn.addEventListener('click', () => {
+			this.onResolve('remote');
+			this.close();
+		});
+
+		const skipBtn = buttonContainer.createEl('button', { 
+			text: '⏭️ Skip for Now'
+		});
+		skipBtn.addEventListener('click', () => {
+			this.onResolve('skip');
+			this.close();
+		});
+	}
+
+	truncateContent(content: string, maxLength: number = 500): string {
+		if (content.length <= maxLength) return content;
+		return content.substring(0, maxLength) + '\n\n... (content truncated)';
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
 class BookStackSettingTab extends PluginSettingTab {
 	plugin: BookStackSyncPlugin;
 
@@ -1242,6 +1392,9 @@ class BookStackSettingTab extends PluginSettingTab {
 
 		containerEl.createEl('h3', { text: 'Creating New Pages' });
 		containerEl.createEl('p', { text: 'To create a new page in BookStack: Simply create a new .md file in a book or chapter folder. During the next sync, the plugin will automatically create the page in BookStack and add the bookstack_id to the frontmatter.' });
+
+		containerEl.createEl('h3', { text: 'Creating New Chapters' });
+		containerEl.createEl('p', { text: 'To create a new chapter in BookStack: Simply create a new folder in a book. During the next sync, the plugin will automatically create the chapter in BookStack and add the bookstack_id to the frontmatter.' });
 
 		containerEl.createEl('h3', { text: 'About SecretStorage' });
 		containerEl.createEl('p', { text: 'This plugin uses Obsidian\'s SecretStorage to securely store your API credentials. Secrets are stored separately from plugin settings and can be shared across multiple plugins. You can manage all your secrets in Settings → About → Manage secrets.' });

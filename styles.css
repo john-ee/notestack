@@ -72,3 +72,66 @@
 		width: 100%;
 	}
 }
+
+.bookstack-conflict-modal {
+	width: 80vw;
+	max-width: 900px;
+}
+
+.conflict-description {
+	margin-bottom: 1em;
+	font-size: 1.1em;
+}
+
+.conflict-timing {
+	background-color: var(--background-secondary);
+	padding: 0.5em 1em;
+	border-radius: 4px;
+	margin-bottom: 1em;
+}
+
+.conflict-timing p {
+	margin: 0.3em 0;
+	font-family: var(--font-monospace);
+	font-size: 0.9em;
+}
+
+.conflict-preview-container {
+	display: flex;
+	gap: 1em;
+	margin: 1em 0;
+}
+
+.conflict-preview {
+	flex: 1;
+	min-width: 0;
+}
+
+.conflict-preview h3 {
+	margin-top: 0;
+	font-size: 1em;
+	color: var(--text-accent);
+}
+
+.conflict-content {
+	max-height: 300px;
+	overflow-y: auto;
+	background-color: var(--background-primary-alt);
+	padding: 1em;
+	border-radius: 4px;
+	font-size: 0.85em;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+}
+
+.conflict-buttons {
+	display: flex;
+	gap: 0.5em;
+	justify-content: center;
+	margin-top: 1.5em;
+}
+
+.conflict-buttons button {
+	flex: 1;
+	padding: 0.8em 1em;
+}
