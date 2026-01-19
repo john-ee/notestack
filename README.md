@@ -182,7 +182,6 @@ MIT License
 
 ## Support
 
-- [Report Issues](https://github.com/john-ee/notestack/issues)
 - [BookStack API Docs](https://demo.bookstackapp.com/api/docs)
 - [Obsidian Plugin Docs](https://docs.obsidian.md/)
 
