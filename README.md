@@ -140,9 +140,9 @@ last_synced: 2024-01-15T14:30:00Z
 - Reference documentation with external images
 
 ## Next steps
-- Use frontmatter data from pages for a resilient book and chapter structure
-- Synchronise at the chapter level for more granular control.
-- Test out attachment management, more specifically images.
+- [x] Use frontmatter data from pages for a resilient book and chapter structure
+- [ ] Synchronise at the chapter level for more granular control.
+- [ ] Test out attachment management, more specifically images.
 
 ## Security
 
@@ -161,6 +161,10 @@ npm run build        # Production build
 ```
 
 ## Changelog
+
+### v0.0.4
+- Self healing mechanisms based on frontmatter. If you rename the book or chapter folder locally it will rename itself back from Bookstack.
+- Added a check that skips adding the title of the page in the body of the file.
 
 ### v0.0.3
 - Interactive conflict resolution modal
