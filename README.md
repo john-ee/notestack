@@ -92,6 +92,8 @@ When both local and remote have changes, an interactive modal appears asking whi
 2. Add `.md` files inside
 3. Run sync - chapter and pages created in BookStack
 
+**Note :** Once the file or the chapter is created, you have to rename it from Bookstack
+
 ## File Structure
 
 ```
@@ -130,7 +132,7 @@ last_synced: 2024-01-15T14:30:00Z
 - No support for BookStack drawings
 - Complex HTML → Markdown conversion may be imperfect
 - Cannot move pages between books/chapters
-- Cannot delete content (sync only updates)
+- Cannot delete content (sync only updates) - not planned
 - Large initial syncs may be slow
 
 ### Best For:
@@ -175,10 +177,6 @@ npm run build        # Production build
 
 ### v0.0.1
 - Initial release
-
-## License
-
-MIT License
 
 ## Support
 
