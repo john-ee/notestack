@@ -146,7 +146,7 @@ last_synced: 2024-01-15T14:30:00Z
 ## Security
 
 - API credentials stored in Obsidian SecretStorage (encrypted)
-- Direct Obsidian ↔ BookStack communication only
+- Direct Obsidian ↔ BookStack communication only via the requestUrl method
 - No third-party servers
 - HTTPS support
 - Vault-specific credential storage
@@ -185,4 +185,5 @@ MIT License
 
 
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
+
 
