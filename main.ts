@@ -825,9 +825,20 @@ export default class BookStackSyncPlugin extends Plugin {
 	async pullPageSync(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'skipped' | 'error'> {
 		try {
 			const page = await this.getPage(pageId);
-			const fileName = `${this.sanitizeFileName(page.name)}.md`;
-			const filePath = `${parentPath}/${fileName}`;
-			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+			
+			// First, try to find existing file by bookstack_id
+			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
+			
+			// If found and filename is different, rename the file
+			const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
+			const expectedFilePath = `${parentPath}/${expectedFileName}`;
+			
+			if (existingFile && existingFile.name !== expectedFileName) {
+				console.log(`Renaming file: ${existingFile.name} → ${expectedFileName}`);
+				await this.app.fileManager.renameFile(existingFile, expectedFilePath);
+				existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath) as TFile;
+			}
+			
 			const remoteUpdated = new Date(page.updated_at);
 
 			if (existingFile instanceof TFile) {
@@ -840,7 +851,7 @@ export default class BookStackSyncPlugin extends Plugin {
 				}
 			}
 
-			await this.pullPage(page, filePath, book, chapter);
+			await this.pullPage(page, expectedFilePath, book, chapter);
 			return 'pulled';
 		} catch (error) {
 			console.error(`Failed to pull page ${pageId}:`, error);
@@ -851,12 +862,22 @@ export default class BookStackSyncPlugin extends Plugin {
 	async pushPageSync(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pushed' | 'skipped' | 'error'> {
 		try {
 			const page = await this.getPage(pageId);
-			const fileName = `${this.sanitizeFileName(page.name)}.md`;
-			const filePath = `${parentPath}/${fileName}`;
-			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-
-			if (!(existingFile instanceof TFile)) {
+			
+			// Find existing file by bookstack_id
+			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
+			
+			if (!existingFile) {
 				return 'skipped'; // No local file to push
+			}
+			
+			// If filename doesn't match page name, rename it
+			const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
+			const expectedFilePath = `${parentPath}/${expectedFileName}`;
+			
+			if (existingFile.name !== expectedFileName) {
+				console.log(`Renaming file before push: ${existingFile.name} → ${expectedFileName}`);
+				await this.app.fileManager.renameFile(existingFile, expectedFilePath);
+				existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath) as TFile;
 			}
 
 			const localContent = await this.app.vault.read(existingFile);
@@ -1035,6 +1056,30 @@ export default class BookStackSyncPlugin extends Plugin {
 			.replace(/[\\/:*?"<>|]/g, '-')
 			.replace(/\s+/g, ' ')
 			.trim();
+	}
+
+	async findFileByBookStackId(pageId: number, parentPath: string): Promise<TFile | null> {
+		const folder = this.app.vault.getAbstractFileByPath(parentPath);
+		if (!(folder instanceof TFolder)) {
+			return null;
+		}
+
+		for (const file of folder.children) {
+			if (!(file instanceof TFile) || file.extension !== 'md') continue;
+			
+			try {
+				const content = await this.app.vault.read(file);
+				const { frontmatter } = this.extractFrontmatter(content);
+				
+				if (frontmatter.bookstack_id === pageId) {
+					return file;
+				}
+			} catch (error) {
+				console.error(`Error reading file ${file.path}:`, error);
+			}
+		}
+		
+		return null;
 	}
 
 	async testConnection(): Promise<void> {

@@ -739,9 +739,14 @@ Check console for details`);
   async pullPageSync(pageId, parentPath, book, chapter) {
     try {
       const page = await this.getPage(pageId);
-      const fileName = `${this.sanitizeFileName(page.name)}.md`;
-      const filePath = `${parentPath}/${fileName}`;
-      const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+      let existingFile = await this.findFileByBookStackId(pageId, parentPath);
+      const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
+      const expectedFilePath = `${parentPath}/${expectedFileName}`;
+      if (existingFile && existingFile.name !== expectedFileName) {
+        console.log(`Renaming file: ${existingFile.name} \u2192 ${expectedFileName}`);
+        await this.app.fileManager.renameFile(existingFile, expectedFilePath);
+        existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath);
+      }
       const remoteUpdated = new Date(page.updated_at);
       if (existingFile instanceof import_obsidian.TFile) {
         const localContent = await this.app.vault.read(existingFile);
@@ -751,7 +756,7 @@ Check console for details`);
           return "skipped";
         }
       }
-      await this.pullPage(page, filePath, book, chapter);
+      await this.pullPage(page, expectedFilePath, book, chapter);
       return "pulled";
     } catch (error) {
       console.error(`Failed to pull page ${pageId}:`, error);
@@ -761,11 +766,16 @@ Check console for details`);
   async pushPageSync(pageId, parentPath, book, chapter) {
     try {
       const page = await this.getPage(pageId);
-      const fileName = `${this.sanitizeFileName(page.name)}.md`;
-      const filePath = `${parentPath}/${fileName}`;
-      const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(existingFile instanceof import_obsidian.TFile)) {
+      let existingFile = await this.findFileByBookStackId(pageId, parentPath);
+      if (!existingFile) {
         return "skipped";
+      }
+      const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
+      const expectedFilePath = `${parentPath}/${expectedFileName}`;
+      if (existingFile.name !== expectedFileName) {
+        console.log(`Renaming file before push: ${existingFile.name} \u2192 ${expectedFileName}`);
+        await this.app.fileManager.renameFile(existingFile, expectedFilePath);
+        existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath);
       }
       const localContent = await this.app.vault.read(existingFile);
       const { frontmatter, body } = this.extractFrontmatter(localContent);
@@ -918,6 +928,26 @@ Check console for details`);
   }
   sanitizeFileName(name) {
     return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
+  }
+  async findFileByBookStackId(pageId, parentPath) {
+    const folder = this.app.vault.getAbstractFileByPath(parentPath);
+    if (!(folder instanceof import_obsidian.TFolder)) {
+      return null;
+    }
+    for (const file of folder.children) {
+      if (!(file instanceof import_obsidian.TFile) || file.extension !== "md")
+        continue;
+      try {
+        const content = await this.app.vault.read(file);
+        const { frontmatter } = this.extractFrontmatter(content);
+        if (frontmatter.bookstack_id === pageId) {
+          return file;
+        }
+      } catch (error) {
+        console.error(`Error reading file ${file.path}:`, error);
+      }
+    }
+    return null;
   }
   async testConnection() {
     new import_obsidian.Notice("Testing BookStack connection...");
