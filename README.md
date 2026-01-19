@@ -8,7 +8,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Flexible Sync Modes** - Pull-only, Push-only, or Bidirectional
 - **Interactive Conflict Resolution** - Choose which version to keep when conflicts occur
 - **Selective Book Sync** - Choose which books to synchronize
-- **Auto-Sync** - Configurable automatic syncing at regular intervals (Untested in my uses yet)
+- **Auto-Sync** - Configurable automatic syncing at regular intervals (Untested for now - I use manual sync)
 - **Create New Content** - Create pages and chapters directly from Obsidian
 - **Mobile Support** - Full Android and iOS compatibility
 - **Secure Credentials** - Uses Obsidian's SecretStorage API
@@ -64,10 +64,11 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 | **Push Only** | Upload only, never download | Obsidian as primary editor |
 
 ### Auto-Sync Settings
-- **Auto Sync** - Enable automatic syncing
+- **Auto Sync** - Enable automatic syncing. Runs only when Obsidian is open or running.
 - **Sync Interval** - How often to sync (minutes)
 
 **⚠️ Important:** Auto-sync can interrupt your work if conflicts occur, as it will show a popup dialog asking which version to keep. For uninterrupted work, use manual sync instead.
+
 
 ### Conflict Resolution
 
@@ -139,7 +140,7 @@ last_synced: 2024-01-15T14:30:00Z
 - Reference documentation with external images
 
 ## Next steps
-- Use frontmatter data from pages for a resilient books and chapters structure
+- Use frontmatter data from pages for a resilient book and chapter structure
 - Synchronise at the chapter level for more granular control.
 - Test out attachment management, more specifically images.
 

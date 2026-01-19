@@ -902,9 +902,21 @@ export default class BookStackSyncPlugin extends Plugin {
 	async syncPageBidirectional(pageId: number, parentPath: string, book: BookDetail, chapter?: Chapter): Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'> {
 		try {
 			const page = await this.getPage(pageId);
-			const fileName = `${this.sanitizeFileName(page.name)}.md`;
-			const filePath = `${parentPath}/${fileName}`;
-			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+			
+			// Find existing file by bookstack_id
+			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
+			
+			// Expected filename based on current page name
+			const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
+			const expectedFilePath = `${parentPath}/${expectedFileName}`;
+			
+			// If file exists but has wrong name, rename it
+			if (existingFile && existingFile.name !== expectedFileName) {
+				console.log(`Renaming file during sync: ${existingFile.name} → ${expectedFileName}`);
+				await this.app.fileManager.renameFile(existingFile, expectedFilePath);
+				existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath) as TFile;
+			}
+			
 			const remoteUpdated = new Date(page.updated_at);
 
 			if (existingFile instanceof TFile) {
@@ -916,7 +928,14 @@ export default class BookStackSyncPlugin extends Plugin {
 
 				if (hasLocalChanges && lastSynced) {
 					if (remoteUpdated > lastSynced) {
-						// CONFLICT DETECTED - Show resolution modal
+						// CONFLICT DETECTED
+						
+						// If auto-sync, use configured behavior instead of asking
+						if (this.isAutoSync) {
+							return await this.handleAutoSyncConflict(page, expectedFilePath, book, chapter, existingFile, frontmatter, body);
+						}
+						
+						// Manual sync - ask user
 						const remoteContent = await this.getRemotePageContent(page);
 						
 						return new Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'>((resolve) => {
@@ -931,18 +950,15 @@ export default class BookStackSyncPlugin extends Plugin {
 								async (choice) => {
 									try {
 										if (choice === 'local') {
-											// User chose to keep local - push to BookStack
 											await this.pushPage(page.id, body, page.name);
 											await this.updateLocalSyncTime(existingFile, frontmatter, body);
 											new Notice(`✅ Pushed local version of: ${page.name}`);
 											resolve('pushed');
 										} else if (choice === 'remote') {
-											// User chose to keep remote - pull from BookStack
-											await this.pullPage(page, filePath, book, chapter);
+											await this.pullPage(page, expectedFilePath, book, chapter);
 											new Notice(`✅ Pulled remote version of: ${page.name}`);
 											resolve('pulled');
 										} else {
-											// User chose to skip
 											new Notice(`⏭️ Skipped conflict: ${page.name}`);
 											resolve('skipped');
 										}
@@ -964,7 +980,7 @@ export default class BookStackSyncPlugin extends Plugin {
 				} else {
 					// No local changes, pull if remote is newer
 					if (!lastSynced || remoteUpdated > lastSynced) {
-						await this.pullPage(page, filePath, book, chapter);
+						await this.pullPage(page, expectedFilePath, book, chapter);
 						return 'pulled';
 					} else {
 						return 'skipped';
@@ -972,7 +988,7 @@ export default class BookStackSyncPlugin extends Plugin {
 				}
 			} else {
 				// File doesn't exist locally, pull it
-				await this.pullPage(page, filePath, book, chapter);
+				await this.pullPage(page, expectedFilePath, book, chapter);
 				return 'pulled';
 			}
 		} catch (error) {
