@@ -138,32 +138,10 @@ last_synced: 2024-01-15T14:30:00Z
 - Simple formatting (headings, lists, links, code blocks)
 - Reference documentation with external images
 
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Authentication errors (401/403) | Verify API credentials, check user permissions, regenerate token |
-| Connection failed | Check URL (no trailing slash), verify HTTPS, test network |
-| No books selected | Run "Select Books to Sync" command |
-| Conflicts keep appearing | Choose resolution: switch to Pull/Push mode temporarily or manually merge |
-| Pages not updating | Check sync summary for errors, review console logs (Ctrl+Shift+I) |
-| HTML instead of Markdown | Normal for WYSIWYG pages, use Markdown editor in BookStack for best results |
-
-## Best Practices
-
-✅ **Do:**
-- Test with Pull-only mode first
-- Use Markdown editor in BookStack
-- Sync regularly with manual sync to avoid interruptions
-- Keep frontmatter intact
-- Maintain backups of both systems
-
-❌ **Don't:**
-- Enable auto-sync if you need uninterrupted work (conflicts will show popups)
-- Manually edit `bookstack_id` or `last_synced`
-- Delete frontmatter fields
-- Expect perfect HTML conversion
-- Rely on this as sole backup
+## Next steps
+- Use frontmatter data from pages for a resilient books and chapters structure
+- Synchronise at the chapter level for more granular control.
+- Test out attachment management, more specifically images.
 
 ## Security
 
@@ -204,5 +182,6 @@ MIT License
 - [Obsidian Plugin Docs](https://docs.obsidian.md/)
 
 ---
+
 
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
