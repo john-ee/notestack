@@ -8,7 +8,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Flexible Sync Modes** - Pull-only, Push-only, or Bidirectional
 - **Interactive Conflict Resolution** - Choose which version to keep when conflicts occur
 - **Selective Book Sync** - Choose which books to synchronize
-- **Auto-Sync** - Configurable automatic syncing at regular intervals
+- **Auto-Sync** - Configurable automatic syncing at regular intervals (Untested in my uses yet)
 - **Create New Content** - Create pages and chapters directly from Obsidian
 - **Mobile Support** - Full Android and iOS compatibility
 - **Secure Credentials** - Uses Obsidian's SecretStorage API
@@ -53,7 +53,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Sync** - Smart sync based on configured mode (Ctrl/Cmd+P → "Sync BookStack Books")
 - **Pull** - Download from BookStack only (Ctrl/Cmd+P → "Pull from BookStack")
 - **Push** - Upload to BookStack only (Ctrl/Cmd+P → "Push to BookStack")
-- **Ribbon Icon** - Click book icon in left sidebar
+- **Ribbon Icon** - Click folder sync icon in left sidebar
 
 ### Sync Modes
 
@@ -138,37 +138,15 @@ last_synced: 2024-01-15T14:30:00Z
 - Simple formatting (headings, lists, links, code blocks)
 - Reference documentation with external images
 
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Authentication errors (401/403) | Verify API credentials, check user permissions, regenerate token |
-| Connection failed | Check URL (no trailing slash), verify HTTPS, test network |
-| No books selected | Run "Select Books to Sync" command |
-| Conflicts keep appearing | Choose resolution: switch to Pull/Push mode temporarily or manually merge |
-| Pages not updating | Check sync summary for errors, review console logs (Ctrl+Shift+I) |
-| HTML instead of Markdown | Normal for WYSIWYG pages, use Markdown editor in BookStack for best results |
-
-## Best Practices
-
-✅ **Do:**
-- Test with Pull-only mode first
-- Use Markdown editor in BookStack
-- Sync regularly with manual sync to avoid interruptions
-- Keep frontmatter intact
-- Maintain backups of both systems
-
-❌ **Don't:**
-- Enable auto-sync if you need uninterrupted work (conflicts will show popups)
-- Manually edit `bookstack_id` or `last_synced`
-- Delete frontmatter fields
-- Expect perfect HTML conversion
-- Rely on this as sole backup
+## Next steps
+- Use frontmatter data from pages for a resilient books and chapters structure
+- Synchronise at the chapter level for more granular control.
+- Test out attachment management, more specifically images.
 
 ## Security
 
 - API credentials stored in Obsidian SecretStorage (encrypted)
-- Direct Obsidian ↔ BookStack communication only
+- Direct Obsidian ↔ BookStack communication only via the requestUrl method
 - No third-party servers
 - HTTPS support
 - Vault-specific credential storage
@@ -205,4 +183,8 @@ MIT License
 
 ---
 
+
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
+
+
+
