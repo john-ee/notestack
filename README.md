@@ -8,7 +8,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Flexible Sync Modes** - Pull-only, Push-only, or Bidirectional
 - **Interactive Conflict Resolution** - Choose which version to keep when conflicts occur
 - **Selective Book Sync** - Choose which books to synchronize
-- **Auto-Sync** - Configurable automatic syncing at regular intervals
+- **Auto-Sync** - Configurable automatic syncing at regular intervals (Untested in my uses yet)
 - **Create New Content** - Create pages and chapters directly from Obsidian
 - **Mobile Support** - Full Android and iOS compatibility
 - **Secure Credentials** - Uses Obsidian's SecretStorage API
@@ -185,3 +185,4 @@ MIT License
 
 
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
+
