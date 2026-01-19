@@ -416,6 +416,25 @@ export default class BookStackSyncPlugin extends Plugin {
 		return md.trim();
 	}
 
+	
+	stripLeadingTitleFromBody(body: string, title: string): string {
+		const lines = body.split('\n');
+
+		// Match "# Title" or "#    Title"
+		const headingRegex = new RegExp(`^#\\s+${this.escapeRegex(title)}\\s*$`, 'i');
+
+		if (lines.length > 0 && headingRegex.test(lines[0])) {
+			return lines.slice(1).join('\n').replace(/^\s*\n/, '');
+		}
+
+		return body;
+	}
+
+	escapeRegex(str: string): string {
+		return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+
 	async syncBooks() {
 		if (this.isSyncing) {
 			new Notice('Sync already in progress...');
@@ -539,7 +558,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pulled = 0, skipped = 0, errors = 0;
 		try {
 			const book = await this.getBook(bookId);
-			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// Try to find existing book folder by ID
+			let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
+			
+			// Expected path based on current book name
+			const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// If book folder exists but has wrong name, rename it
+			if (existingBookPath && existingBookPath !== expectedBookPath) {
+				console.log(`[BookStack] Renaming book folder: ${existingBookPath} → ${expectedBookPath}`);
+				await this.renameFolderSafely(existingBookPath, expectedBookPath);
+				existingBookPath = expectedBookPath;
+			}
+			
+			// Use existing or expected path
+			const bookPath = existingBookPath || expectedBookPath;
 			await this.ensureFolderExists(bookPath);
 
 			for (const content of book.contents) {
@@ -566,7 +600,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const book = await this.getBook(bookId);
-			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// Try to find existing book folder by ID
+			let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
+			
+			// Expected path based on current book name
+			const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// If book folder exists but has wrong name, rename it
+			if (existingBookPath && existingBookPath !== expectedBookPath) {
+				console.log(`[BookStack] Renaming book folder: ${existingBookPath} → ${expectedBookPath}`);
+				await this.renameFolderSafely(existingBookPath, expectedBookPath);
+				existingBookPath = expectedBookPath;
+			}
+			
+			// Use existing or expected path
+			const bookPath = existingBookPath || expectedBookPath;
 			await this.ensureFolderExists(bookPath);
 
 			// First, push existing pages
@@ -599,7 +648,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const book = await this.getBook(bookId);
-			const bookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// Try to find existing book folder by ID
+			let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
+			
+			// Expected path based on current book name
+			const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
+			
+			// If book folder exists but has wrong name, rename it
+			if (existingBookPath && existingBookPath !== expectedBookPath) {
+				console.log(`[BookStack] Renaming book folder: ${existingBookPath} → ${expectedBookPath}`);
+				await this.renameFolderSafely(existingBookPath, expectedBookPath);
+				existingBookPath = expectedBookPath;
+			}
+			
+			// Use existing or expected path
+			const bookPath = existingBookPath || expectedBookPath;
 			await this.ensureFolderExists(bookPath);
 
 			for (const content of book.contents) {
@@ -635,7 +699,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pulled = 0, skipped = 0, errors = 0;
 		try {
 			const chapter = await this.getChapter(chapterId);
-			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// Try to find existing chapter folder by ID
+			let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
+			
+			// Expected path based on current chapter name
+			const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// If chapter folder exists but has wrong name, rename it
+			if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
+				console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} → ${expectedChapterPath}`);
+				await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
+				existingChapterPath = expectedChapterPath;
+			}
+			
+			// Use existing or expected path
+			const chapterPath = existingChapterPath || expectedChapterPath;
 			await this.ensureFolderExists(chapterPath);
 
 			if (chapter.pages) {
@@ -657,7 +736,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pushed = 0, skipped = 0, errors = 0;
 		try {
 			const chapter = await this.getChapter(chapterId);
-			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// Try to find existing chapter folder by ID
+			let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
+			
+			// Expected path based on current chapter name
+			const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// If chapter folder exists but has wrong name, rename it
+			if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
+				console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} → ${expectedChapterPath}`);
+				await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
+				existingChapterPath = expectedChapterPath;
+			}
+			
+			// Use existing or expected path
+			const chapterPath = existingChapterPath || expectedChapterPath;
 			await this.ensureFolderExists(chapterPath);
 
 			if (chapter.pages) {
@@ -683,7 +777,22 @@ export default class BookStackSyncPlugin extends Plugin {
 		let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
 		try {
 			const chapter = await this.getChapter(chapterId);
-			const chapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// Try to find existing chapter folder by ID
+			let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
+			
+			// Expected path based on current chapter name
+			const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
+			
+			// If chapter folder exists but has wrong name, rename it
+			if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
+				console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} → ${expectedChapterPath}`);
+				await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
+				existingChapterPath = expectedChapterPath;
+			}
+			
+			// Use existing or expected path
+			const chapterPath = existingChapterPath || expectedChapterPath;
 			await this.ensureFolderExists(chapterPath);
 
 			if (chapter.pages) {
@@ -887,7 +996,8 @@ export default class BookStackSyncPlugin extends Plugin {
 			const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + 1000));
 
 			if (hasLocalChanges) {
-				await this.pushPage(page.id, body, page.name);
+				const cleanedBody = this.stripLeadingTitleFromBody(body, page.name);
+				await this.pushPage(page.id, cleanedBody, page.name);
 				await this.updateLocalSyncTime(existingFile, frontmatter, body);
 				return 'pushed';
 			}
@@ -912,7 +1022,7 @@ export default class BookStackSyncPlugin extends Plugin {
 			
 			// If file exists but has wrong name, rename it
 			if (existingFile && existingFile.name !== expectedFileName) {
-				console.log(`Renaming file during sync: ${existingFile.name} → ${expectedFileName}`);
+				console.log(`[BookStack] Renaming file during sync: ${existingFile.name} → ${expectedFileName}`);
 				await this.app.fileManager.renameFile(existingFile, expectedFilePath);
 				existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath) as TFile;
 			}
@@ -928,14 +1038,7 @@ export default class BookStackSyncPlugin extends Plugin {
 
 				if (hasLocalChanges && lastSynced) {
 					if (remoteUpdated > lastSynced) {
-						// CONFLICT DETECTED
-						
-						// If auto-sync, use configured behavior instead of asking
-						if (this.isAutoSync) {
-							return await this.handleAutoSyncConflict(page, expectedFilePath, book, chapter, existingFile, frontmatter, body);
-						}
-						
-						// Manual sync - ask user
+						// CONFLICT DETECTED - Show resolution modal
 						const remoteContent = await this.getRemotePageContent(page);
 						
 						return new Promise<'pulled' | 'pushed' | 'created' | 'skipped' | 'error'>((resolve) => {
@@ -950,7 +1053,11 @@ export default class BookStackSyncPlugin extends Plugin {
 								async (choice) => {
 									try {
 										if (choice === 'local') {
-											await this.pushPage(page.id, body, page.name);
+											if (!(existingFile instanceof TFile)) {
+												throw new Error('Expected existing local file during conflict resolution.');
+											}
+											const cleanedBody = this.stripLeadingTitleFromBody(body, page.name);
+											await this.pushPage(page.id, cleanedBody, page.name);
 											await this.updateLocalSyncTime(existingFile, frontmatter, body);
 											new Notice(`✅ Pushed local version of: ${page.name}`);
 											resolve('pushed');
@@ -973,9 +1080,13 @@ export default class BookStackSyncPlugin extends Plugin {
 						});
 					} else {
 						// Local is newer, push
-						await this.pushPage(page.id, body, page.name);
+						if (!(existingFile instanceof TFile)) {
+							throw new Error('Expected existing local file while pushing newer local version.');
+						}
+						const cleanedBody = this.stripLeadingTitleFromBody(body, page.name);
+						await this.pushPage(page.id, cleanedBody, page.name);
 						await this.updateLocalSyncTime(existingFile, frontmatter, body);
-						return 'pushed';
+						return 'pushed'
 					}
 				} else {
 					// No local changes, pull if remote is newer
@@ -1096,6 +1207,99 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 		
 		return null;
+	}
+
+	async findBookFolderByBookId(bookId: number, basePath: string): Promise<string | null> {
+		const baseFolder = this.app.vault.getAbstractFileByPath(basePath);
+		if (!(baseFolder instanceof TFolder)) return null;
+		
+		// Check each subfolder in basePath
+		for (const item of baseFolder.children) {
+			if (!(item instanceof TFolder)) continue;
+			
+			// Look for any page in this folder with matching book_id
+			const hasMatchingPage = await this.folderContainsBookId(item, bookId);
+			if (hasMatchingPage) {
+				return item.path;
+			}
+		}
+		
+		return null;
+	}
+
+	async folderContainsBookId(folder: TFolder, bookId: number): Promise<boolean> {
+		for (const file of folder.children) {
+			if (file instanceof TFile && file.extension === 'md') {
+				try {
+					const content = await this.app.vault.read(file);
+					const { frontmatter } = this.extractFrontmatter(content);
+					if (frontmatter.book_id === bookId) {
+						return true;
+					}
+				} catch (error) {
+					// Continue checking other files
+				}
+			}
+			// Also check subfolders (for chapters)
+			if (file instanceof TFolder) {
+				const found = await this.folderContainsBookId(file, bookId);
+				if (found) return true;
+			}
+		}
+		return false;
+	}
+
+	async findChapterFolderByChapterId(chapterId: number, bookPath: string): Promise<string | null> {
+		const bookFolder = this.app.vault.getAbstractFileByPath(bookPath);
+		if (!(bookFolder instanceof TFolder)) return null;
+		
+		// Check each subfolder in book
+		for (const item of bookFolder.children) {
+			if (!(item instanceof TFolder)) continue;
+			
+			// Look for any page in this folder with matching chapter_id
+			const hasMatchingPage = await this.folderContainsChapterId(item, chapterId);
+			if (hasMatchingPage) {
+				return item.path;
+			}
+		}
+		
+		return null;
+	}
+
+	async folderContainsChapterId(folder: TFolder, chapterId: number): Promise<boolean> {
+		for (const file of folder.children) {
+			if (file instanceof TFile && file.extension === 'md') {
+				try {
+					const content = await this.app.vault.read(file);
+					const { frontmatter } = this.extractFrontmatter(content);
+					if (frontmatter.chapter_id === chapterId) {
+						return true;
+					}
+				} catch (error) {
+					// Continue checking other files
+				}
+			}
+		}
+		return false;
+	}
+
+	async renameFolderSafely(oldPath: string, newPath: string): Promise<void> {
+		const oldFolder = this.app.vault.getAbstractFileByPath(oldPath);
+		if (!(oldFolder instanceof TFolder)) {
+			throw new Error(`Folder not found: ${oldPath}`);
+		}
+		
+		// Check if target already exists
+		const targetExists = this.app.vault.getAbstractFileByPath(newPath);
+		if (targetExists) {
+			console.warn(`[BookStack] Target folder already exists: ${newPath}, skipping rename`);
+			return;
+		}
+		
+		// Rename the folder
+		await this.app.fileManager.renameFile(oldFolder, newPath);
+		console.log(`[BookStack] Successfully renamed folder: ${oldPath} → ${newPath}`);
 	}
 
 	async testConnection(): Promise<void> {
