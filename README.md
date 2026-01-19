@@ -53,7 +53,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Sync** - Smart sync based on configured mode (Ctrl/Cmd+P → "Sync BookStack Books")
 - **Pull** - Download from BookStack only (Ctrl/Cmd+P → "Pull from BookStack")
 - **Push** - Upload to BookStack only (Ctrl/Cmd+P → "Push to BookStack")
-- **Ribbon Icon** - Click book icon in left sidebar
+- **Ribbon Icon** - Click folder sync icon in left sidebar
 
 ### Sync Modes
 
@@ -185,5 +185,6 @@ MIT License
 
 
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
+
 
 
