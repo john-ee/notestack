@@ -352,15 +352,26 @@ Check console for details`);
     return md.trim();
   }
   stripLeadingTitleFromBody(body, title) {
+    if (!body || !title)
+      return body;
     const lines = body.split("\n");
-    const headingRegex = new RegExp(`^#\\s+${this.escapeRegex(title)}\\s*$`, "i");
-    if (lines.length > 0 && headingRegex.test(lines[0])) {
-      return lines.slice(1).join("\n").replace(/^\s*\n/, "");
+    if (lines.length === 0)
+      return body;
+    const firstLine = lines[0].trim();
+    const normalizedTitle = title.trim();
+    const h1Regex = /^#\s+(.+)$/;
+    const match = firstLine.match(h1Regex);
+    if (match) {
+      const headingText = match[1].trim();
+      if (headingText.toLowerCase() === normalizedTitle.toLowerCase()) {
+        let startIndex = 1;
+        while (startIndex < lines.length && lines[startIndex].trim() === "") {
+          startIndex++;
+        }
+        return lines.slice(startIndex).join("\n");
+      }
     }
     return body;
-  }
-  escapeRegex(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   async syncBooks() {
     if (this.isSyncing) {
@@ -940,6 +951,7 @@ Check console for details`);
       console.log(`Markdown export failed for page ${page.id}, converting HTML`);
       content = this.htmlToMarkdown(page.html);
     }
+    content = this.stripLeadingTitleFromBody(content, page.name);
     const metadata = {
       title: page.name,
       bookstack_id: page.id,

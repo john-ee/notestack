@@ -4,7 +4,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 
 ## Features
 
-- **Smart Bidirectional Sync** - Automatically syncs based on timestamps with conflict detection
+- **Bidirectional Sync** - Automatically syncs based on timestamps with conflict detection
 - **Flexible Sync Modes** - Pull-only, Push-only, or Bidirectional
 - **Interactive Conflict Resolution** - Choose which version to keep when conflicts occur
 - **Selective Book Sync** - Choose which books to synchronize
@@ -59,7 +59,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 
 | Mode | Behavior | Best For |
 |------|----------|----------|
-| **Bidirectional** | Smart sync based on timestamps, shows conflict modal on conflicts | Active editing in both places |
+| **Bidirectional** | Sync based on timestamps, shows conflict modal on conflicts | Active editing in both places |
 | **Pull Only** | Download only, never upload | BookStack as source of truth |
 | **Push Only** | Upload only, never download | Obsidian as primary editor |
 
@@ -164,6 +164,9 @@ npm run build        # Production build
 
 ## Changelog
 
+### v0.0.5
+- Fixed a bug that wrote the title of the page in the body when the renaming mechanism ran.
+
 ### v0.0.4
 - Self healing mechanisms based on frontmatter. If you rename the book or chapter folder locally it will rename itself back from Bookstack.
 - Added a check that skips adding the title of the page in the body of the file.
@@ -187,6 +190,3 @@ npm run build        # Production build
 
 
 **⚠️ Disclaimer:** This is an unofficial plugin built with suggested code from Claude and Copilot. You are responsible for your data. Always maintain backups. Not affiliated with BookStack or Obsidian.
-
-
-

@@ -416,24 +416,35 @@ export default class BookStackSyncPlugin extends Plugin {
 		return md.trim();
 	}
 
-	
 	stripLeadingTitleFromBody(body: string, title: string): string {
+		if (!body || !title) return body;
+		
 		const lines = body.split('\n');
+		if (lines.length === 0) return body;
 
-		// Match "# Title" or "#    Title"
-		const headingRegex = new RegExp(`^#\\s+${this.escapeRegex(title)}\\s*$`, 'i');
-
-		if (lines.length > 0 && headingRegex.test(lines[0])) {
-			return lines.slice(1).join('\n').replace(/^\s*\n/, '');
+		// Normalize and compare
+		const firstLine = lines[0].trim();
+		const normalizedTitle = title.trim();
+		
+		// Check various h1 formats: "# Title", "#Title", "#  Title"
+		const h1Regex = /^#\s+(.+)$/;
+		const match = firstLine.match(h1Regex);
+		
+		if (match) {
+			const headingText = match[1].trim();
+			// Case-insensitive comparison
+			if (headingText.toLowerCase() === normalizedTitle.toLowerCase()) {
+				// Remove heading and following blank lines
+				let startIndex = 1;
+				while (startIndex < lines.length && lines[startIndex].trim() === '') {
+					startIndex++;
+				}
+				return lines.slice(startIndex).join('\n');
+			}
 		}
 
 		return body;
 	}
-
-	escapeRegex(str: string): string {
-		return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	}
-
 
 	async syncBooks() {
 		if (this.isSyncing) {
@@ -1108,35 +1119,37 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 	}
 
-	async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter): Promise<void> {
-		let content = '';
-		try {
-			content = await this.exportPageMarkdown(page.id);
-		} catch (error) {
-			console.log(`Markdown export failed for page ${page.id}, converting HTML`);
-			content = this.htmlToMarkdown(page.html);
-		}
-
-		const metadata: PageFrontmatter = {
-			title: page.name,
-			bookstack_id: page.id,
-			book_id: book.id,
-			chapter_id: chapter?.id ?? null,
-			book_name: (book as Book).name,
-			book_description: (book as Book).description,
-			created: page.created_at,
-			updated: page.updated_at,
-			last_synced: new Date().toISOString()
-		};
-
-		if (chapter) {
-			metadata.chapter_name = chapter.name;
-			metadata.chapter_description = chapter.description;
-		}
-
-		const fullContent = this.createFrontmatter(metadata) + content;
-		await this.createOrUpdateFile(filePath, fullContent);
+async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter): Promise<void> {
+	let content = '';
+	try {
+		content = await this.exportPageMarkdown(page.id);
+	} catch (error) {
+		console.log(`Markdown export failed for page ${page.id}, converting HTML`);
+		content = this.htmlToMarkdown(page.html);
 	}
+
+	content = this.stripLeadingTitleFromBody(content, page.name);
+
+	const metadata: PageFrontmatter = {
+		title: page.name,
+		bookstack_id: page.id,
+		book_id: book.id,
+		chapter_id: chapter?.id ?? null,
+		book_name: (book as Book).name,
+		book_description: (book as Book).description,
+		created: page.created_at,
+		updated: page.updated_at,
+		last_synced: new Date().toISOString()
+	};
+
+	if (chapter) {
+		metadata.chapter_name = chapter.name;
+		metadata.chapter_description = chapter.description;
+	}
+
+	const fullContent = this.createFrontmatter(metadata) + content;
+	await this.createOrUpdateFile(filePath, fullContent);
+}
 
 	async getRemotePageContent(page: Page): Promise<string> {
 		try {

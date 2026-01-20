@@ -1,6 +1,6 @@
 {
   "name": "notestack",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "BookStack sync plugin for Obsidian",
   "main": "main.js",
   "scripts": {
