@@ -35,14 +35,20 @@ var DEFAULT_SETTINGS = {
   selectedBooks: [],
   autoSync: false,
   syncInterval: 60,
-  syncMode: "bidirectional",
-  showDescriptionsInFrontmatter: true
+  syncMode: "bidirectional"
 };
 var BookStackSyncPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.syncIntervalId = null;
     this.isSyncing = false;
+    this.bookFolderCache = /* @__PURE__ */ new Map();
+    this.chapterFolderCache = /* @__PURE__ */ new Map();
+    this.pageFolderCache = /* @__PURE__ */ new Map();
+    // Constants
+    this.SYNC_TIME_BUFFER_MS = 1e3;
+    this.README_FILENAME = "README.md";
+    this.MARKDOWN_EXTENSION = "md";
   }
   get isMobile() {
     var _a;
@@ -69,6 +75,9 @@ var BookStackSyncPlugin = class extends import_obsidian.Plugin {
           return;
         }
         this.isSyncing = true;
+        this.bookFolderCache.clear();
+        this.chapterFolderCache.clear();
+        this.pageFolderCache.clear();
         try {
           await this.pullFromBookStack();
         } finally {
@@ -284,6 +293,19 @@ Check console for details`);
     });
     return { frontmatter, body };
   }
+  async extractFrontmatterOnly(file) {
+    const content = await this.app.vault.read(file);
+    if (!content.startsWith("---\n")) {
+      return {};
+    }
+    const endIndex = content.indexOf("\n---\n", 4);
+    if (endIndex === -1) {
+      return {};
+    }
+    const frontmatterSection = content.substring(0, endIndex + 5);
+    const { frontmatter } = this.extractFrontmatter(frontmatterSection + "\n");
+    return frontmatter;
+  }
   createFrontmatter(metadata) {
     var _a, _b, _c, _d, _e, _f;
     let fm = "---\n";
@@ -295,23 +317,21 @@ Check console for details`);
 `;
     fm += `chapter_id: ${metadata.chapter_id !== void 0 ? metadata.chapter_id : ""}
 `;
-    if (this.settings.showDescriptionsInFrontmatter) {
-      if (metadata.book_name) {
-        fm += `book_name: ${metadata.book_name}
+    if (metadata.book_name) {
+      fm += `book_name: ${metadata.book_name}
 `;
-      }
-      if (metadata.book_description) {
-        fm += `book_description: "${metadata.book_description.replace(/"/g, '\\"')}"
+    }
+    if (metadata.book_description) {
+      fm += `book_description: "${metadata.book_description.replace(/"/g, '\\"')}"
 `;
-      }
-      if (metadata.chapter_name) {
-        fm += `chapter_name: ${metadata.chapter_name}
+    }
+    if (metadata.chapter_name) {
+      fm += `chapter_name: ${metadata.chapter_name}
 `;
-      }
-      if (metadata.chapter_description) {
-        fm += `chapter_description: "${metadata.chapter_description.replace(/"/g, '\\"')}"
+    }
+    if (metadata.chapter_description) {
+      fm += `chapter_description: "${metadata.chapter_description.replace(/"/g, '\\"')}"
 `;
-      }
     }
     fm += `created: ${(_d = metadata.created) != null ? _d : ""}
 `;
@@ -392,6 +412,9 @@ Check console for details`);
       return;
     }
     this.isSyncing = true;
+    this.bookFolderCache.clear();
+    this.chapterFolderCache.clear();
+    this.pageFolderCache.clear();
     try {
       switch (this.settings.syncMode) {
         case "pull-only":
@@ -413,6 +436,9 @@ Check console for details`);
   }
   async pullFromBookStack() {
     new import_obsidian.Notice("Pulling from BookStack...");
+    this.bookFolderCache.clear();
+    this.chapterFolderCache.clear();
+    this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
     let pullCount = 0;
@@ -435,6 +461,9 @@ Check console for details`);
   }
   async pushToBookStack() {
     new import_obsidian.Notice("Pushing to BookStack...");
+    this.bookFolderCache.clear();
+    this.chapterFolderCache.clear();
+    this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
     let pushCount = 0;
@@ -461,6 +490,9 @@ Check console for details`);
   }
   async bidirectionalSync() {
     new import_obsidian.Notice("Starting bidirectional sync...");
+    this.bookFolderCache.clear();
+    this.chapterFolderCache.clear();
+    this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
     let pullCount = 0;
@@ -493,15 +525,13 @@ Check console for details`);
     let pulled = 0, skipped = 0, errors = 0;
     try {
       const book = await this.getBook(bookId);
-      let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
-      const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
-      if (existingBookPath && existingBookPath !== expectedBookPath) {
-        console.log(`[BookStack] Renaming book folder: ${existingBookPath} \u2192 ${expectedBookPath}`);
-        await this.renameFolderSafely(existingBookPath, expectedBookPath);
-        existingBookPath = expectedBookPath;
-      }
-      const bookPath = existingBookPath || expectedBookPath;
-      await this.ensureFolderExists(bookPath);
+      const bookPath = await this.findOrCreateFolderWithRename(
+        bookId,
+        book.name,
+        basePath,
+        (id, parent) => this.findBookFolderByBookId(id, parent),
+        "book"
+      );
       for (const content of book.contents) {
         if (content.type === "chapter") {
           const result = await this.pullChapter(content.id, bookPath, book);
@@ -510,16 +540,21 @@ Check console for details`);
           errors += result.errors;
         } else if (content.type === "page") {
           const result = await this.pullPageSync(content.id, bookPath, book);
-          if (result === "pulled")
-            pulled++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pulled":
+              pulled++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
     } catch (error) {
-      console.error(`Failed to pull book ${bookId}:`, error);
+      this.handleSyncError(`Failed to pull book ${bookId}`, error);
       errors++;
     }
     return { pulled, skipped, errors };
@@ -528,15 +563,13 @@ Check console for details`);
     let pushed = 0, created = 0, skipped = 0, errors = 0;
     try {
       const book = await this.getBook(bookId);
-      let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
-      const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
-      if (existingBookPath && existingBookPath !== expectedBookPath) {
-        console.log(`[BookStack] Renaming book folder: ${existingBookPath} \u2192 ${expectedBookPath}`);
-        await this.renameFolderSafely(existingBookPath, expectedBookPath);
-        existingBookPath = expectedBookPath;
-      }
-      const bookPath = existingBookPath || expectedBookPath;
-      await this.ensureFolderExists(bookPath);
+      const bookPath = await this.findOrCreateFolderWithRename(
+        bookId,
+        book.name,
+        basePath,
+        (id, parent) => this.findBookFolderByBookId(id, parent),
+        "book"
+      );
       for (const content of book.contents) {
         if (content.type === "chapter") {
           const result = await this.pushChapter(content.id, bookPath, book);
@@ -545,19 +578,24 @@ Check console for details`);
           errors += result.errors;
         } else if (content.type === "page") {
           const result = await this.pushPageSync(content.id, bookPath, book);
-          if (result === "pushed")
-            pushed++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pushed":
+              pushed++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
       const localResult = await this.syncLocalPages(bookPath, book);
       created += localResult.created;
       errors += localResult.errors;
     } catch (error) {
-      console.error(`Failed to push book ${bookId}:`, error);
+      this.handleSyncError(`Failed to push book ${bookId}`, error);
       errors++;
     }
     return { pushed, created, skipped, errors };
@@ -566,15 +604,13 @@ Check console for details`);
     let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
     try {
       const book = await this.getBook(bookId);
-      let existingBookPath = await this.findBookFolderByBookId(bookId, basePath);
-      const expectedBookPath = `${basePath}/${this.sanitizeFileName(book.name)}`;
-      if (existingBookPath && existingBookPath !== expectedBookPath) {
-        console.log(`[BookStack] Renaming book folder: ${existingBookPath} \u2192 ${expectedBookPath}`);
-        await this.renameFolderSafely(existingBookPath, expectedBookPath);
-        existingBookPath = expectedBookPath;
-      }
-      const bookPath = existingBookPath || expectedBookPath;
-      await this.ensureFolderExists(bookPath);
+      const bookPath = await this.findOrCreateFolderWithRename(
+        bookId,
+        book.name,
+        basePath,
+        (id, parent) => this.findBookFolderByBookId(id, parent),
+        "book"
+      );
       for (const content of book.contents) {
         if (content.type === "chapter") {
           const result = await this.syncChapterBidirectional(content.id, bookPath, book);
@@ -585,23 +621,30 @@ Check console for details`);
           errors += result.errors;
         } else if (content.type === "page") {
           const result = await this.syncPageBidirectional(content.id, bookPath, book);
-          if (result === "pulled")
-            pulled++;
-          else if (result === "pushed")
-            pushed++;
-          else if (result === "created")
-            created++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pulled":
+              pulled++;
+              break;
+            case "pushed":
+              pushed++;
+              break;
+            case "created":
+              created++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
       const localResult = await this.syncLocalPages(bookPath, book);
       created += localResult.created;
       errors += localResult.errors;
     } catch (error) {
-      console.error(`Failed to sync book ${bookId}:`, error);
+      this.handleSyncError(`Failed to sync book ${bookId}`, error);
       errors++;
     }
     return { pulled, pushed, created, skipped, errors };
@@ -610,28 +653,31 @@ Check console for details`);
     let pulled = 0, skipped = 0, errors = 0;
     try {
       const chapter = await this.getChapter(chapterId);
-      let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
-      const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
-      if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
-        console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} \u2192 ${expectedChapterPath}`);
-        await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
-        existingChapterPath = expectedChapterPath;
-      }
-      const chapterPath = existingChapterPath || expectedChapterPath;
-      await this.ensureFolderExists(chapterPath);
+      const chapterPath = await this.findOrCreateFolderWithRename(
+        chapterId,
+        chapter.name,
+        bookPath,
+        (id, parent) => this.findChapterFolderByChapterId(id, parent),
+        "chapter"
+      );
       if (chapter.pages) {
         for (const page of chapter.pages) {
           const result = await this.pullPageSync(page.id, chapterPath, book, chapter);
-          if (result === "pulled")
-            pulled++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pulled":
+              pulled++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
     } catch (error) {
-      console.error(`Failed to pull chapter ${chapterId}:`, error);
+      this.handleSyncError(`Failed to pull chapter ${chapterId}`, error);
       errors++;
     }
     return { pulled, skipped, errors };
@@ -640,30 +686,33 @@ Check console for details`);
     let pushed = 0, skipped = 0, errors = 0;
     try {
       const chapter = await this.getChapter(chapterId);
-      let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
-      const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
-      if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
-        console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} \u2192 ${expectedChapterPath}`);
-        await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
-        existingChapterPath = expectedChapterPath;
-      }
-      const chapterPath = existingChapterPath || expectedChapterPath;
-      await this.ensureFolderExists(chapterPath);
+      const chapterPath = await this.findOrCreateFolderWithRename(
+        chapterId,
+        chapter.name,
+        bookPath,
+        (id, parent) => this.findChapterFolderByChapterId(id, parent),
+        "chapter"
+      );
       if (chapter.pages) {
         for (const page of chapter.pages) {
           const result = await this.pushPageSync(page.id, chapterPath, book, chapter);
-          if (result === "pushed")
-            pushed++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pushed":
+              pushed++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
       const localResult = await this.syncLocalPages(chapterPath, book, chapter);
       errors += localResult.errors;
     } catch (error) {
-      console.error(`Failed to push chapter ${chapterId}:`, error);
+      this.handleSyncError(`Failed to push chapter ${chapterId}`, error);
       errors++;
     }
     return { pushed, skipped, errors };
@@ -672,35 +721,40 @@ Check console for details`);
     let pulled = 0, pushed = 0, created = 0, skipped = 0, errors = 0;
     try {
       const chapter = await this.getChapter(chapterId);
-      let existingChapterPath = await this.findChapterFolderByChapterId(chapterId, bookPath);
-      const expectedChapterPath = `${bookPath}/${this.sanitizeFileName(chapter.name)}`;
-      if (existingChapterPath && existingChapterPath !== expectedChapterPath) {
-        console.log(`[BookStack] Renaming chapter folder: ${existingChapterPath} \u2192 ${expectedChapterPath}`);
-        await this.renameFolderSafely(existingChapterPath, expectedChapterPath);
-        existingChapterPath = expectedChapterPath;
-      }
-      const chapterPath = existingChapterPath || expectedChapterPath;
-      await this.ensureFolderExists(chapterPath);
+      const chapterPath = await this.findOrCreateFolderWithRename(
+        chapterId,
+        chapter.name,
+        bookPath,
+        (id, parent) => this.findChapterFolderByChapterId(id, parent),
+        "chapter"
+      );
       if (chapter.pages) {
         for (const page of chapter.pages) {
           const result = await this.syncPageBidirectional(page.id, chapterPath, book, chapter);
-          if (result === "pulled")
-            pulled++;
-          else if (result === "pushed")
-            pushed++;
-          else if (result === "created")
-            created++;
-          else if (result === "skipped")
-            skipped++;
-          else if (result === "error")
-            errors++;
+          switch (result) {
+            case "pulled":
+              pulled++;
+              break;
+            case "pushed":
+              pushed++;
+              break;
+            case "created":
+              created++;
+              break;
+            case "skipped":
+              skipped++;
+              break;
+            case "error":
+              errors++;
+              break;
+          }
         }
       }
       const localResult = await this.syncLocalPages(chapterPath, book, chapter);
       created += localResult.created;
       errors += localResult.errors;
     } catch (error) {
-      console.error(`Failed to sync chapter ${chapterId}:`, error);
+      this.handleSyncError(`Failed to sync chapter ${chapterId}`, error);
       errors++;
     }
     return { pulled, pushed, created, skipped, errors };
@@ -722,9 +776,7 @@ Check console for details`);
         }
       }
       for (const file of folder.children) {
-        if (!(file instanceof import_obsidian.TFile) || file.extension !== "md")
-          continue;
-        if (file.name === "README.md")
+        if (!(file instanceof import_obsidian.TFile) || this.shouldSkipFile(file))
           continue;
         const content = await this.app.vault.read(file);
         const { frontmatter, body } = this.extractFrontmatter(content);
@@ -755,14 +807,14 @@ Check console for details`);
             new import_obsidian.Notice(`Created page in BookStack: ${file.basename}`);
             created++;
           } catch (error) {
-            console.error(`Failed to create page ${file.basename}:`, error);
+            this.handleSyncError(`Failed to create page ${file.basename}`, error);
             new import_obsidian.Notice(`Failed to create page: ${file.basename}`);
             errors++;
           }
         }
       }
     } catch (error) {
-      console.error(`Failed to sync local pages in ${folderPath}:`, error);
+      this.handleSyncError(`Failed to sync local pages in ${folderPath}`, error);
       errors++;
     }
     return { created, errors };
@@ -788,29 +840,21 @@ Check console for details`);
         const chapterResult = await this.syncLocalPages(folder.path, book, newChapter);
         console.log(`Synced ${chapterResult.created} pages in new chapter ${folderName}`);
       } catch (error) {
-        console.error(`Failed to create chapter ${folderName}:`, error);
+        this.handleSyncError(`Failed to create chapter ${folderName}`, error);
         new import_obsidian.Notice(`Failed to create chapter: ${folderName}`);
       }
     } else {
-      try {
-        const chapter = await this.getChapter(existingChapterId);
-        await this.syncLocalPages(folder.path, book, chapter);
-      } catch (error) {
-        console.error(`Failed to sync existing chapter ${folderName}:`, error);
-      }
+      console.log(`[BookStack] Existing chapter detected: ${folderName} (ID: ${existingChapterId})`);
     }
   }
   async pullPageSync(pageId, parentPath, book, chapter) {
     try {
       const page = await this.getPage(pageId);
       let existingFile = await this.findFileByBookStackId(pageId, parentPath);
-      const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
-      const expectedFilePath = `${parentPath}/${expectedFileName}`;
-      if (existingFile && existingFile.name !== expectedFileName) {
-        console.log(`Renaming file: ${existingFile.name} \u2192 ${expectedFileName}`);
-        await this.app.fileManager.renameFile(existingFile, expectedFilePath);
-        existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath);
+      if (existingFile) {
+        existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
       }
+      const expectedFilePath = `${parentPath}/${this.sanitizeFileName(page.name)}.md`;
       const remoteUpdated = new Date(page.updated_at);
       if (existingFile instanceof import_obsidian.TFile) {
         const localContent = await this.app.vault.read(existingFile);
@@ -834,18 +878,12 @@ Check console for details`);
       if (!existingFile) {
         return "skipped";
       }
-      const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
-      const expectedFilePath = `${parentPath}/${expectedFileName}`;
-      if (existingFile.name !== expectedFileName) {
-        console.log(`Renaming file before push: ${existingFile.name} \u2192 ${expectedFileName}`);
-        await this.app.fileManager.renameFile(existingFile, expectedFilePath);
-        existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath);
-      }
+      existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
       const localContent = await this.app.vault.read(existingFile);
       const { frontmatter, body } = this.extractFrontmatter(localContent);
       const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
       const localModified = new Date(existingFile.stat.mtime);
-      const hasLocalChanges = !!lastSynced && localModified > new Date(lastSynced.getTime() + 1e3);
+      const hasLocalChanges = !!lastSynced && localModified > new Date(lastSynced.getTime() + this.SYNC_TIME_BUFFER_MS);
       if (hasLocalChanges) {
         const cleanedBody = this.stripLeadingTitleFromBody(body, page.name);
         await this.pushPage(page.id, cleanedBody, page.name);
@@ -862,20 +900,17 @@ Check console for details`);
     try {
       const page = await this.getPage(pageId);
       let existingFile = await this.findFileByBookStackId(pageId, parentPath);
-      const expectedFileName = `${this.sanitizeFileName(page.name)}.md`;
-      const expectedFilePath = `${parentPath}/${expectedFileName}`;
-      if (existingFile && existingFile.name !== expectedFileName) {
-        console.log(`[BookStack] Renaming file during sync: ${existingFile.name} \u2192 ${expectedFileName}`);
-        await this.app.fileManager.renameFile(existingFile, expectedFilePath);
-        existingFile = this.app.vault.getAbstractFileByPath(expectedFilePath);
+      if (existingFile) {
+        existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
       }
+      const expectedFilePath = `${parentPath}/${this.sanitizeFileName(page.name)}.md`;
       const remoteUpdated = new Date(page.updated_at);
       if (existingFile instanceof import_obsidian.TFile) {
         const localContent = await this.app.vault.read(existingFile);
         const { frontmatter, body } = this.extractFrontmatter(localContent);
         const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
         const localModified = new Date(existingFile.stat.mtime);
-        const hasLocalChanges = !!lastSynced && localModified > new Date(lastSynced.getTime() + 1e3);
+        const hasLocalChanges = !!lastSynced && localModified > new Date(lastSynced.getTime() + this.SYNC_TIME_BUFFER_MS);
         if (hasLocalChanges && lastSynced) {
           if (remoteUpdated > lastSynced) {
             const remoteContent = await this.getRemotePageContent(page);
@@ -1009,6 +1044,14 @@ Check console for details`);
     return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
   }
   async findFileByBookStackId(pageId, parentPath) {
+    var _a;
+    if (this.pageFolderCache.has(pageId)) {
+      const cachedFile = this.pageFolderCache.get(pageId);
+      if (((_a = cachedFile.parent) == null ? void 0 : _a.path) === parentPath) {
+        return cachedFile;
+      }
+      this.pageFolderCache.delete(pageId);
+    }
     const folder = this.app.vault.getAbstractFileByPath(parentPath);
     if (!(folder instanceof import_obsidian.TFolder)) {
       return null;
@@ -1017,9 +1060,9 @@ Check console for details`);
       if (!(file instanceof import_obsidian.TFile) || file.extension !== "md")
         continue;
       try {
-        const content = await this.app.vault.read(file);
-        const { frontmatter } = this.extractFrontmatter(content);
+        const frontmatter = await this.extractFrontmatterOnly(file);
         if (frontmatter.bookstack_id === pageId) {
+          this.pageFolderCache.set(pageId, file);
           return file;
         }
       } catch (error) {
@@ -1029,6 +1072,9 @@ Check console for details`);
     return null;
   }
   async findBookFolderByBookId(bookId, basePath) {
+    if (this.bookFolderCache.has(bookId)) {
+      return this.bookFolderCache.get(bookId);
+    }
     const baseFolder = this.app.vault.getAbstractFileByPath(basePath);
     if (!(baseFolder instanceof import_obsidian.TFolder))
       return null;
@@ -1037,6 +1083,7 @@ Check console for details`);
         continue;
       const hasMatchingPage = await this.folderContainsBookId(item, bookId);
       if (hasMatchingPage) {
+        this.bookFolderCache.set(bookId, item.path);
         return item.path;
       }
     }
@@ -1046,8 +1093,7 @@ Check console for details`);
     for (const file of folder.children) {
       if (file instanceof import_obsidian.TFile && file.extension === "md") {
         try {
-          const content = await this.app.vault.read(file);
-          const { frontmatter } = this.extractFrontmatter(content);
+          const frontmatter = await this.extractFrontmatterOnly(file);
           if (frontmatter.book_id === bookId) {
             return true;
           }
@@ -1063,6 +1109,9 @@ Check console for details`);
     return false;
   }
   async findChapterFolderByChapterId(chapterId, bookPath) {
+    if (this.chapterFolderCache.has(chapterId)) {
+      return this.chapterFolderCache.get(chapterId);
+    }
     const bookFolder = this.app.vault.getAbstractFileByPath(bookPath);
     if (!(bookFolder instanceof import_obsidian.TFolder))
       return null;
@@ -1071,6 +1120,7 @@ Check console for details`);
         continue;
       const hasMatchingPage = await this.folderContainsChapterId(item, chapterId);
       if (hasMatchingPage) {
+        this.chapterFolderCache.set(chapterId, item.path);
         return item.path;
       }
     }
@@ -1080,8 +1130,7 @@ Check console for details`);
     for (const file of folder.children) {
       if (file instanceof import_obsidian.TFile && file.extension === "md") {
         try {
-          const content = await this.app.vault.read(file);
-          const { frontmatter } = this.extractFrontmatter(content);
+          const frontmatter = await this.extractFrontmatterOnly(file);
           if (frontmatter.chapter_id === chapterId) {
             return true;
           }
@@ -1091,18 +1140,67 @@ Check console for details`);
     }
     return false;
   }
-  async renameFolderSafely(oldPath, newPath) {
-    const oldFolder = this.app.vault.getAbstractFileByPath(oldPath);
-    if (!(oldFolder instanceof import_obsidian.TFolder)) {
-      throw new Error(`Folder not found: ${oldPath}`);
+  async findOrCreateFolderWithRename(folderId, expectedName, parentPath, finderFn, folderType) {
+    if (folderType === "book") {
+      this.bookFolderCache.delete(folderId);
+    } else if (folderType === "chapter") {
+      this.chapterFolderCache.delete(folderId);
     }
-    const targetExists = this.app.vault.getAbstractFileByPath(newPath);
-    if (targetExists) {
-      console.warn(`[BookStack] Target folder already exists: ${newPath}, skipping rename`);
-      return;
+    let existingPath = await finderFn(folderId, parentPath);
+    const sanitizedName = this.sanitizeFileName(expectedName);
+    const expectedPath = `${parentPath}/${sanitizedName}`;
+    if (existingPath) {
+      const existingFolder = this.app.vault.getAbstractFileByPath(existingPath);
+      if (existingFolder instanceof import_obsidian.TFolder) {
+        const currentName = existingFolder.name;
+        const expectedNameSanitized = sanitizedName;
+        if (currentName !== expectedNameSanitized) {
+          console.log(`[BookStack] Detected renamed ${folderType}: "${currentName}" should be "${expectedNameSanitized}"`);
+          console.log(`[BookStack] Renaming ${folderType} folder: ${existingPath} \u2192 ${expectedPath}`);
+          try {
+            await this.app.fileManager.renameFile(existingFolder, expectedNameSanitized);
+            console.log(`[BookStack] Successfully renamed ${folderType} folder to match BookStack`);
+          } catch (error) {
+            console.error(`[BookStack] Failed to rename ${folderType} folder:`, error);
+          }
+        }
+      }
     }
-    await this.app.fileManager.renameFile(oldFolder, newPath);
-    console.log(`[BookStack] Successfully renamed folder: ${oldPath} \u2192 ${newPath}`);
+    const finalPath = existingPath || expectedPath;
+    if (!existingPath) {
+      await this.ensureFolderExists(finalPath);
+      console.log(`[BookStack] Created new ${folderType} folder: ${finalPath}`);
+    }
+    if (folderType === "book") {
+      this.bookFolderCache.set(folderId, finalPath);
+    } else if (folderType === "chapter") {
+      this.chapterFolderCache.set(folderId, finalPath);
+    }
+    return finalPath;
+  }
+  async renameFileIfNeeded(file, expectedName, parentPath) {
+    const expectedFileName = `${this.sanitizeFileName(expectedName)}.md`;
+    const expectedFilePath = `${parentPath}/${expectedFileName}`;
+    if (file.name !== expectedFileName) {
+      console.log(`[BookStack] Renaming file: ${file.name} \u2192 ${expectedFileName}`);
+      await this.app.fileManager.renameFile(file, expectedFilePath);
+      return this.app.vault.getAbstractFileByPath(expectedFilePath);
+    }
+    return file;
+  }
+  shouldSkipFile(file) {
+    if (file.extension !== this.MARKDOWN_EXTENSION)
+      return true;
+    if (file.name === this.README_FILENAME)
+      return true;
+    return false;
+  }
+  handleSyncError(context, error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`[BookStack] ${context}:`, error);
+  }
+  isTFile(file) {
+    return file instanceof import_obsidian.TFile;
   }
   async testConnection() {
     new import_obsidian.Notice("Testing BookStack connection...");
@@ -1321,12 +1419,6 @@ var BookStackSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian.Setting(containerEl).setName("Show Descriptions in Frontmatter").setDesc("Include book and chapter descriptions in page frontmatter instead of separate README files").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showDescriptionsInFrontmatter).onChange(async (value) => {
-        this.plugin.settings.showDescriptionsInFrontmatter = value;
-        await this.plugin.saveSettings();
-      })
-    );
     new import_obsidian.Setting(containerEl).setName("Sync Mode").setDesc("Choose how sync operates: pull from BookStack, push to BookStack, or bidirectional").addDropdown(
       (dropdown) => dropdown.addOption("bidirectional", "Bidirectional (Smart sync based on timestamps)").addOption("pull-only", "Pull Only (BookStack \u2192 Obsidian)").addOption("push-only", "Push Only (Obsidian \u2192 BookStack)").setValue(this.plugin.settings.syncMode).onChange(async (value) => {
         this.plugin.settings.syncMode = value;
@@ -1364,8 +1456,6 @@ var BookStackSettingTab = class extends import_obsidian.PluginSettingTab {
     containerEl.createEl("p", { text: "Bidirectional: Compares timestamps and syncs in the direction of the most recent change. If both changed, local is preserved. Creates new pages in BookStack when you add .md files locally." });
     containerEl.createEl("p", { text: "Pull Only: Only downloads changes from BookStack, never uploads local changes or creates new pages." });
     containerEl.createEl("p", { text: "Push Only: Only uploads local changes to BookStack and creates new pages from local .md files, never downloads remote changes." });
-    containerEl.createEl("h3", { text: "About Descriptions" });
-    containerEl.createEl("p", { text: `When "Show Descriptions in Frontmatter" is enabled, book and chapter descriptions are stored in each page's frontmatter (book_description, chapter_description fields). This eliminates the need for separate README.md files and keeps all metadata with each page.` });
     containerEl.createEl("h3", { text: "Creating New Pages" });
     containerEl.createEl("p", { text: "To create a new page in BookStack: Simply create a new .md file in a book or chapter folder. During the next sync, the plugin will automatically create the page in BookStack and add the bookstack_id to the frontmatter." });
     containerEl.createEl("h3", { text: "Creating New Chapters" });
