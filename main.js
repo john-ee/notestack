@@ -32,7 +32,7 @@ var DEFAULT_SETTINGS = {
   tokenIdSecret: "",
   tokenSecretSecret: "",
   syncFolder: "BookStack",
-  selectedBooks: [],
+  syncSelection: {},
   autoSync: false,
   syncInterval: 60,
   syncMode: "bidirectional"
@@ -407,8 +407,8 @@ Check console for details`);
       new import_obsidian.Notice("Please configure BookStack API credentials in settings");
       return;
     }
-    if (this.settings.selectedBooks.length === 0) {
-      new import_obsidian.Notice('No books selected for sync. Use "Select Books to Sync" command.');
+    if (Object.keys(this.settings.syncSelection).length === 0) {
+      new import_obsidian.Notice('No books or chapters selected for sync. Use "Select Books to Sync" command.');
       return;
     }
     this.isSyncing = true;
@@ -435,20 +435,68 @@ Check console for details`);
     }
   }
   async pullFromBookStack() {
+    var _a, _b;
     new import_obsidian.Notice("Pulling from BookStack...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
+    let totalPages = 0;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        const book = await this.getBook(bookId);
+        if (selection.mode === "full") {
+          for (const content of book.contents) {
+            if (content.type === "chapter") {
+              const chapter = await this.getChapter(content.id);
+              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
+            } else if (content.type === "page") {
+              totalPages++;
+            }
+          }
+        } else {
+          for (const chapterId of selection.chapterIds || []) {
+            const chapter = await this.getChapter(chapterId);
+            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
+          }
+        }
+      } catch (error) {
+        console.error(`Error counting pages for book ${bookId}:`, error);
+      }
+    }
     let pullCount = 0;
     let skipCount = 0;
     let errorCount = 0;
-    for (const bookId of this.settings.selectedBooks) {
-      const result = await this.pullBook(bookId, syncFolder);
-      pullCount += result.pulled;
-      skipCount += result.skipped;
-      errorCount += result.errors;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        if (selection.mode === "full") {
+          const result = await this.pullBook(bookId, syncFolder);
+          pullCount += result.pulled;
+          skipCount += result.skipped;
+          errorCount += result.errors;
+        } else {
+          const book = await this.getBook(bookId);
+          const bookPath = await this.findOrCreateFolderWithRename(
+            bookId,
+            book.name,
+            syncFolder,
+            (id, parent) => this.findBookFolderByBookId(id, parent),
+            "book"
+          );
+          for (const chapterId of selection.chapterIds || []) {
+            const result = await this.pullChapter(chapterId, bookPath, book);
+            pullCount += result.pulled;
+            skipCount += result.skipped;
+            errorCount += result.errors;
+          }
+        }
+      } catch (error) {
+        console.error(`Error pulling book ${bookId}:`, error);
+        errorCount++;
+      }
     }
     const summary = [];
     if (pullCount > 0)
@@ -460,22 +508,70 @@ Check console for details`);
     new import_obsidian.Notice(`Pull complete: ${summary.join(", ")}`);
   }
   async pushToBookStack() {
+    var _a, _b;
     new import_obsidian.Notice("Pushing to BookStack...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
+    let totalPages = 0;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        const book = await this.getBook(bookId);
+        if (selection.mode === "full") {
+          for (const content of book.contents) {
+            if (content.type === "chapter") {
+              const chapter = await this.getChapter(content.id);
+              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
+            } else if (content.type === "page") {
+              totalPages++;
+            }
+          }
+        } else {
+          for (const chapterId of selection.chapterIds || []) {
+            const chapter = await this.getChapter(chapterId);
+            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
+          }
+        }
+      } catch (error) {
+        console.error(`Error counting pages for book ${bookId}:`, error);
+      }
+    }
     let pushCount = 0;
     let createCount = 0;
     let skipCount = 0;
     let errorCount = 0;
-    for (const bookId of this.settings.selectedBooks) {
-      const result = await this.pushBook(bookId, syncFolder);
-      pushCount += result.pushed;
-      createCount += result.created;
-      skipCount += result.skipped;
-      errorCount += result.errors;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        if (selection.mode === "full") {
+          const result = await this.pushBook(bookId, syncFolder);
+          pushCount += result.pushed;
+          createCount += result.created;
+          skipCount += result.skipped;
+          errorCount += result.errors;
+        } else {
+          const book = await this.getBook(bookId);
+          const bookPath = await this.findOrCreateFolderWithRename(
+            bookId,
+            book.name,
+            syncFolder,
+            (id, parent) => this.findBookFolderByBookId(id, parent),
+            "book"
+          );
+          for (const chapterId of selection.chapterIds || []) {
+            const result = await this.pushChapter(chapterId, bookPath, book);
+            pushCount += result.pushed;
+            skipCount += result.skipped;
+            errorCount += result.errors;
+          }
+        }
+      } catch (error) {
+        console.error(`Error pushing book ${bookId}:`, error);
+        errorCount++;
+      }
     }
     const summary = [];
     if (createCount > 0)
@@ -489,24 +585,74 @@ Check console for details`);
     new import_obsidian.Notice(`Push complete: ${summary.join(", ")}`);
   }
   async bidirectionalSync() {
+    var _a, _b;
     new import_obsidian.Notice("Starting bidirectional sync...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
+    let totalPages = 0;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        const book = await this.getBook(bookId);
+        if (selection.mode === "full") {
+          for (const content of book.contents) {
+            if (content.type === "chapter") {
+              const chapter = await this.getChapter(content.id);
+              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
+            } else if (content.type === "page") {
+              totalPages++;
+            }
+          }
+        } else {
+          for (const chapterId of selection.chapterIds || []) {
+            const chapter = await this.getChapter(chapterId);
+            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
+          }
+        }
+      } catch (error) {
+        console.error(`Error counting pages for book ${bookId}:`, error);
+      }
+    }
     let pullCount = 0;
     let pushCount = 0;
     let createCount = 0;
     let skipCount = 0;
     let errorCount = 0;
-    for (const bookId of this.settings.selectedBooks) {
-      const result = await this.syncBookBidirectional(bookId, syncFolder);
-      pullCount += result.pulled;
-      pushCount += result.pushed;
-      createCount += result.created;
-      skipCount += result.skipped;
-      errorCount += result.errors;
+    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+      const bookId = Number(bookIdStr);
+      try {
+        if (selection.mode === "full") {
+          const result = await this.syncBookBidirectional(bookId, syncFolder);
+          pullCount += result.pulled;
+          pushCount += result.pushed;
+          createCount += result.created;
+          skipCount += result.skipped;
+          errorCount += result.errors;
+        } else {
+          const book = await this.getBook(bookId);
+          const bookPath = await this.findOrCreateFolderWithRename(
+            bookId,
+            book.name,
+            syncFolder,
+            (id, parent) => this.findBookFolderByBookId(id, parent),
+            "book"
+          );
+          for (const chapterId of selection.chapterIds || []) {
+            const result = await this.syncChapterBidirectional(chapterId, bookPath, book);
+            pullCount += result.pulled;
+            pushCount += result.pushed;
+            createCount += result.created;
+            skipCount += result.skipped;
+            errorCount += result.errors;
+          }
+        }
+      } catch (error) {
+        console.error(`Error syncing book ${bookId}:`, error);
+        errorCount++;
+      }
     }
     const summary = [];
     if (createCount > 0)
@@ -1273,13 +1419,13 @@ var BookSelectionModal = class extends import_obsidian.Modal {
   constructor(app, plugin) {
     super(app);
     this.books = [];
+    this.bookStates = /* @__PURE__ */ new Map();
     this.plugin = plugin;
-    this.selectedBooks = new Set(plugin.settings.selectedBooks);
   }
   async onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Select Books to Sync" });
+    contentEl.createEl("h2", { text: "Select Books and Chapters to Sync" });
     const loadingEl = contentEl.createEl("p", { text: "Loading books..." });
     try {
       this.books = await this.plugin.listBooks();
@@ -1288,31 +1434,187 @@ var BookSelectionModal = class extends import_obsidian.Modal {
         contentEl.createEl("p", { text: "No books found in your BookStack instance." });
         return;
       }
+      for (const book of this.books) {
+        const selection = this.plugin.settings.syncSelection[book.id];
+        if (!selection) {
+          this.bookStates.set(book.id, {
+            bookChecked: false,
+            selectedChapters: /* @__PURE__ */ new Set(),
+            expanded: false
+          });
+        } else if (selection.mode === "full") {
+          this.bookStates.set(book.id, {
+            bookChecked: true,
+            selectedChapters: /* @__PURE__ */ new Set(),
+            expanded: false
+          });
+        } else {
+          this.bookStates.set(book.id, {
+            bookChecked: false,
+            selectedChapters: new Set(selection.chapterIds || []),
+            expanded: false
+          });
+        }
+      }
       const listEl = contentEl.createEl("div", { cls: "book-list" });
       for (const book of this.books) {
-        const itemEl = listEl.createEl("div", { cls: "book-item" });
-        const checkbox = itemEl.createEl("input", { type: "checkbox" });
-        checkbox.checked = this.selectedBooks.has(book.id);
-        checkbox.addEventListener("change", () => {
-          if (checkbox.checked)
-            this.selectedBooks.add(book.id);
-          else
-            this.selectedBooks.delete(book.id);
-        });
-        itemEl.createEl("label", { text: book.name });
+        await this.renderBookRow(listEl, book);
       }
       const buttonContainer = contentEl.createEl("div", { cls: "button-container" });
       const saveBtn = buttonContainer.createEl("button", { text: "Save Selection" });
       saveBtn.addEventListener("click", async () => {
-        this.plugin.settings.selectedBooks = Array.from(this.selectedBooks);
-        await this.plugin.saveSettings();
-        new import_obsidian.Notice(`${this.selectedBooks.size} books selected for sync`);
-        this.close();
+        await this.save();
       });
     } catch (error) {
       loadingEl.setText(`Error loading books: ${error.message}`);
       console.error("Error loading books:", error);
     }
+  }
+  async renderBookRow(container, book) {
+    const state = this.bookStates.get(book.id);
+    const bookItemEl = container.createEl("div", { cls: "book-item" });
+    const arrowEl = bookItemEl.createEl("span", {
+      cls: "book-arrow",
+      text: state.expanded ? "\u25BC" : "\u25B6"
+    });
+    arrowEl.style.cursor = "pointer";
+    arrowEl.style.marginRight = "8px";
+    arrowEl.style.display = "inline-block";
+    arrowEl.style.width = "12px";
+    const bookCheckbox = bookItemEl.createEl("input", { type: "checkbox" });
+    bookCheckbox.checked = state.bookChecked;
+    bookCheckbox.indeterminate = !state.bookChecked && state.selectedChapters.size > 0;
+    bookCheckbox.addEventListener("change", () => {
+      if (bookCheckbox.checked) {
+        state.bookChecked = true;
+        state.selectedChapters.clear();
+        this.updateChapterCheckboxes(book.id, true);
+      } else {
+        state.bookChecked = false;
+        this.updateChapterCheckboxes(book.id, false);
+      }
+      this.updateBookCheckbox(book.id);
+    });
+    bookItemEl.createEl("label", { text: ` \u{1F4DA} ${book.name}` });
+    const chapterContainerEl = container.createEl("div", {
+      cls: "chapter-container",
+      attr: { style: "display: none; margin-left: 30px;" }
+    });
+    arrowEl.addEventListener("click", async () => {
+      state.expanded = !state.expanded;
+      arrowEl.setText(state.expanded ? "\u25BC" : "\u25B6");
+      if (state.expanded) {
+        chapterContainerEl.style.display = "block";
+        if (!state.chapters) {
+          chapterContainerEl.empty();
+          chapterContainerEl.createEl("p", { text: "Loading chapters..." });
+          try {
+            const bookDetail = await this.plugin.getBook(book.id);
+            state.chapters = bookDetail.contents.filter((c) => c.type === "chapter");
+            chapterContainerEl.empty();
+            if (state.chapters.length === 0) {
+              chapterContainerEl.createEl("p", {
+                text: "No chapters in this book",
+                attr: { style: "font-style: italic; color: #888;" }
+              });
+            } else {
+              for (const chapter of state.chapters) {
+                this.renderChapterRow(chapterContainerEl, chapter, book.id);
+              }
+            }
+          } catch (error) {
+            console.error("Error loading chapters:", error);
+            chapterContainerEl.empty();
+            chapterContainerEl.createEl("p", {
+              text: "Error loading chapters",
+              attr: { style: "color: red;" }
+            });
+          }
+        }
+      } else {
+        chapterContainerEl.style.display = "none";
+      }
+    });
+    bookItemEl.bookCheckbox = bookCheckbox;
+    bookItemEl.chapterContainer = chapterContainerEl;
+    bookItemEl.bookId = book.id;
+  }
+  renderChapterRow(container, chapter, bookId) {
+    const state = this.bookStates.get(bookId);
+    const chapterItemEl = container.createEl("div", {
+      cls: "chapter-item",
+      attr: { style: "margin-left: 20px;" }
+    });
+    const chapterCheckbox = chapterItemEl.createEl("input", { type: "checkbox" });
+    chapterCheckbox.checked = state.selectedChapters.has(chapter.id);
+    chapterCheckbox.disabled = state.bookChecked;
+    chapterCheckbox.addEventListener("change", () => {
+      if (chapterCheckbox.checked) {
+        state.bookChecked = false;
+        state.selectedChapters.add(chapter.id);
+      } else {
+        state.selectedChapters.delete(chapter.id);
+      }
+      this.updateBookCheckbox(bookId);
+    });
+    chapterItemEl.createEl("label", { text: ` \u{1F4C2} ${chapter.name}` });
+    chapterItemEl.chapterCheckbox = chapterCheckbox;
+    chapterItemEl.chapterId = chapter.id;
+  }
+  updateChapterCheckboxes(bookId, disable) {
+    const state = this.bookStates.get(bookId);
+    const bookItems = this.contentEl.querySelectorAll(".book-item");
+    for (const item of Array.from(bookItems)) {
+      if (item.bookId === bookId) {
+        const chapterContainer = item.chapterContainer;
+        if (chapterContainer) {
+          const chapterCheckboxes = chapterContainer.querySelectorAll('input[type="checkbox"]');
+          for (const cb of Array.from(chapterCheckboxes)) {
+            cb.disabled = disable;
+            if (disable) {
+              cb.checked = false;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+  updateBookCheckbox(bookId) {
+    const state = this.bookStates.get(bookId);
+    const bookItems = this.contentEl.querySelectorAll(".book-item");
+    for (const item of Array.from(bookItems)) {
+      if (item.bookId === bookId) {
+        const bookCheckbox = item.bookCheckbox;
+        bookCheckbox.checked = state.bookChecked;
+        bookCheckbox.indeterminate = !state.bookChecked && state.selectedChapters.size > 0;
+        break;
+      }
+    }
+  }
+  async save() {
+    const syncSelection = {};
+    for (const [bookId, state] of this.bookStates) {
+      if (state.bookChecked) {
+        syncSelection[bookId] = { mode: "full" };
+      } else if (state.selectedChapters.size > 0) {
+        syncSelection[bookId] = {
+          mode: "chapters",
+          chapterIds: Array.from(state.selectedChapters)
+        };
+      }
+    }
+    this.plugin.settings.syncSelection = syncSelection;
+    await this.plugin.saveSettings();
+    const totalBooks = Object.keys(syncSelection).length;
+    const fullBooks = Object.values(syncSelection).filter((s) => s.mode === "full").length;
+    const partialBooks = totalBooks - fullBooks;
+    let message = `Selection saved: ${totalBooks} book${totalBooks !== 1 ? "s" : ""}`;
+    if (partialBooks > 0) {
+      message += ` (${partialBooks} partial)`;
+    }
+    new import_obsidian.Notice(message);
+    this.close();
   }
   onClose() {
     const { contentEl } = this;

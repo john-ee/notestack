@@ -5,7 +5,12 @@ interface BookStackSettings {
 	tokenIdSecret: string;
 	tokenSecretSecret: string;
 	syncFolder: string;
-	selectedBooks: number[];
+	syncSelection: {
+		[bookId: number]: {
+			mode: 'full' | 'chapters';
+			chapterIds?: number[];
+		}
+	};
 	autoSync: boolean;
 	syncInterval: number;
 	syncMode: 'pull-only' | 'push-only' | 'bidirectional';
@@ -16,7 +21,7 @@ const DEFAULT_SETTINGS: BookStackSettings = {
 	tokenIdSecret: '',
 	tokenSecretSecret: '',
 	syncFolder: 'BookStack',
-	selectedBooks: [],
+	syncSelection: {},
 	autoSync: false,
 	syncInterval: 60,
 	syncMode: 'bidirectional'
@@ -491,8 +496,8 @@ export default class BookStackSyncPlugin extends Plugin {
 			new Notice('Please configure BookStack API credentials in settings');
 			return;
 		}
-		if (this.settings.selectedBooks.length === 0) {
-			new Notice('No books selected for sync. Use "Select Books to Sync" command.');
+		if (Object.keys(this.settings.syncSelection).length === 0) {
+			new Notice('No books or chapters selected for sync. Use "Select Books to Sync" command.');
 			return;
 		}
 
@@ -525,7 +530,6 @@ export default class BookStackSyncPlugin extends Plugin {
 
 	async pullFromBookStack() {
 		new Notice('Pulling from BookStack...');
-		
 		// Clear caches at start
 		this.bookFolderCache.clear();
 		this.chapterFolderCache.clear();
@@ -534,15 +538,70 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
+		// Count total items to sync
+		let totalPages = 0;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				const book = await this.getBook(bookId);
+				
+				if (selection.mode === 'full') {
+					// Count all pages in book
+					for (const content of book.contents) {
+						if (content.type === 'chapter') {
+							const chapter = await this.getChapter(content.id);
+							totalPages += chapter.pages?.length || 0;
+						} else if (content.type === 'page') {
+							totalPages++;
+						}
+					}
+				} else {
+					// Count only pages in selected chapters
+					for (const chapterId of selection.chapterIds || []) {
+						const chapter = await this.getChapter(chapterId);
+						totalPages += chapter.pages?.length || 0;
+					}
+				}
+			} catch (error) {
+				console.error(`Error counting pages for book ${bookId}:`, error);
+			}
+		}
+		
 		let pullCount = 0;
 		let skipCount = 0;
 		let errorCount = 0;
 
-		for (const bookId of this.settings.selectedBooks) {
-			const result = await this.pullBook(bookId, syncFolder);
-			pullCount += result.pulled;
-			skipCount += result.skipped;
-			errorCount += result.errors;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				if (selection.mode === 'full') {
+					// Sync entire book
+					const result = await this.pullBook(bookId, syncFolder);
+					pullCount += result.pulled;
+					skipCount += result.skipped;
+					errorCount += result.errors;
+				} else {
+					// Sync only selected chapters
+					const book = await this.getBook(bookId);
+					const bookPath = await this.findOrCreateFolderWithRename(
+						bookId,
+						book.name,
+						syncFolder,
+						(id, parent) => this.findBookFolderByBookId(id, parent),
+						'book'
+					);
+					
+					for (const chapterId of selection.chapterIds || []) {
+						const result = await this.pullChapter(chapterId, bookPath, book);
+						pullCount += result.pulled;
+						skipCount += result.skipped;
+						errorCount += result.errors;
+					}
+				}
+			} catch (error) {
+				console.error(`Error pulling book ${bookId}:`, error);
+				errorCount++;
+			}
 		}
 
 		const summary: string[] = [];
@@ -554,7 +613,6 @@ export default class BookStackSyncPlugin extends Plugin {
 
 	async pushToBookStack() {
 		new Notice('Pushing to BookStack...');
-		
 		// Clear caches at start
 		this.bookFolderCache.clear();
 		this.chapterFolderCache.clear();
@@ -563,17 +621,72 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
+		// Count total items
+		let totalPages = 0;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				const book = await this.getBook(bookId);
+				
+				if (selection.mode === 'full') {
+					// Count all pages in book
+					for (const content of book.contents) {
+						if (content.type === 'chapter') {
+							const chapter = await this.getChapter(content.id);
+							totalPages += chapter.pages?.length || 0;
+						} else if (content.type === 'page') {
+							totalPages++;
+						}
+					}
+				} else {
+					// Count only pages in selected chapters
+					for (const chapterId of selection.chapterIds || []) {
+						const chapter = await this.getChapter(chapterId);
+						totalPages += chapter.pages?.length || 0;
+					}
+				}
+			} catch (error) {
+				console.error(`Error counting pages for book ${bookId}:`, error);
+			}
+		}
+		
 		let pushCount = 0;
 		let createCount = 0;
 		let skipCount = 0;
 		let errorCount = 0;
 
-		for (const bookId of this.settings.selectedBooks) {
-			const result = await this.pushBook(bookId, syncFolder);
-			pushCount += result.pushed;
-			createCount += result.created;
-			skipCount += result.skipped;
-			errorCount += result.errors;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				if (selection.mode === 'full') {
+					// Sync entire book
+					const result = await this.pushBook(bookId, syncFolder);
+					pushCount += result.pushed;
+					createCount += result.created;
+					skipCount += result.skipped;
+					errorCount += result.errors;
+				} else {
+					// Sync only selected chapters
+					const book = await this.getBook(bookId);
+					const bookPath = await this.findOrCreateFolderWithRename(
+						bookId,
+						book.name,
+						syncFolder,
+						(id, parent) => this.findBookFolderByBookId(id, parent),
+						'book'
+					);
+					
+					for (const chapterId of selection.chapterIds || []) {
+						const result = await this.pushChapter(chapterId, bookPath, book);
+						pushCount += result.pushed;
+						skipCount += result.skipped;
+						errorCount += result.errors;
+					}
+				}
+			} catch (error) {
+				console.error(`Error pushing book ${bookId}:`, error);
+				errorCount++;
+			}
 		}
 
 		const summary: string[] = [];
@@ -586,7 +699,6 @@ export default class BookStackSyncPlugin extends Plugin {
 
 	async bidirectionalSync() {
 		new Notice('Starting bidirectional sync...');
-		
 		// Clear caches at start
 		this.bookFolderCache.clear();
 		this.chapterFolderCache.clear();
@@ -595,19 +707,76 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
+		// Count total items
+		let totalPages = 0;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				const book = await this.getBook(bookId);
+				
+				if (selection.mode === 'full') {
+					// Count all pages in book
+					for (const content of book.contents) {
+						if (content.type === 'chapter') {
+							const chapter = await this.getChapter(content.id);
+							totalPages += chapter.pages?.length || 0;
+						} else if (content.type === 'page') {
+							totalPages++;
+						}
+					}
+				} else {
+					// Count only pages in selected chapters
+					for (const chapterId of selection.chapterIds || []) {
+						const chapter = await this.getChapter(chapterId);
+						totalPages += chapter.pages?.length || 0;
+					}
+				}
+			} catch (error) {
+				console.error(`Error counting pages for book ${bookId}:`, error);
+			}
+		}
+		
 		let pullCount = 0;
 		let pushCount = 0;
 		let createCount = 0;
 		let skipCount = 0;
 		let errorCount = 0;
 
-		for (const bookId of this.settings.selectedBooks) {
-			const result = await this.syncBookBidirectional(bookId, syncFolder);
-			pullCount += result.pulled;
-			pushCount += result.pushed;
-			createCount += result.created;
-			skipCount += result.skipped;
-			errorCount += result.errors;
+		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
+			const bookId = Number(bookIdStr);
+			try {
+				if (selection.mode === 'full') {
+					// Sync entire book
+					const result = await this.syncBookBidirectional(bookId, syncFolder);
+					pullCount += result.pulled;
+					pushCount += result.pushed;
+					createCount += result.created;
+					skipCount += result.skipped;
+					errorCount += result.errors;
+				} else {
+					// Sync only selected chapters
+					const book = await this.getBook(bookId);
+					const bookPath = await this.findOrCreateFolderWithRename(
+						bookId,
+						book.name,
+						syncFolder,
+						(id, parent) => this.findBookFolderByBookId(id, parent),
+						'book'
+					);
+					
+					for (const chapterId of selection.chapterIds || []) {
+						const result = await this.syncChapterBidirectional(chapterId, bookPath, book);
+						pullCount += result.pulled;
+						pushCount += result.pushed;
+						createCount += result.created;
+						skipCount += result.skipped;
+						errorCount += result.errors;
+					}
+				}
+			} catch (error) {
+				console.error(`Error syncing book ${bookId}:`, error);
+				errorCount++;
+			}
 		}
 
 		const summary: string[] = [];
@@ -1476,52 +1645,266 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 	}
 }
 
+interface BookState {
+	bookChecked: boolean;
+	selectedChapters: Set<number>;
+	chapters?: BookContent[];
+	expanded: boolean;
+}
+
 class BookSelectionModal extends Modal {
 	plugin: BookStackSyncPlugin;
 	books: Book[] = [];
-	selectedBooks: Set<number>;
+	bookStates: Map<number, BookState> = new Map();
+	containerEl: HTMLElement;
 
 	constructor(app: App, plugin: BookStackSyncPlugin) {
 		super(app);
 		this.plugin = plugin;
-		this.selectedBooks = new Set(plugin.settings.selectedBooks);
 	}
 
 	async onOpen() {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl('h2', { text: 'Select Books to Sync' });
+		contentEl.createEl('h2', { text: 'Select Books and Chapters to Sync' });
+		
 		const loadingEl = contentEl.createEl('p', { text: 'Loading books...' });
+		
 		try {
 			this.books = await this.plugin.listBooks();
 			loadingEl.remove();
+			
 			if (this.books.length === 0) {
 				contentEl.createEl('p', { text: 'No books found in your BookStack instance.' });
 				return;
 			}
-			const listEl = contentEl.createEl('div', { cls: 'book-list' });
+			
+			// Initialize book states from settings
 			for (const book of this.books) {
-				const itemEl = listEl.createEl('div', { cls: 'book-item' });
-				const checkbox = itemEl.createEl('input', { type: 'checkbox' });
-				checkbox.checked = this.selectedBooks.has(book.id);
-				checkbox.addEventListener('change', () => {
-					if (checkbox.checked) this.selectedBooks.add(book.id);
-					else this.selectedBooks.delete(book.id);
-				});
-				itemEl.createEl('label', { text: book.name });
+				const selection = this.plugin.settings.syncSelection[book.id];
+				
+				if (!selection) {
+					this.bookStates.set(book.id, {
+						bookChecked: false,
+						selectedChapters: new Set(),
+						expanded: false
+					});
+				} else if (selection.mode === 'full') {
+					this.bookStates.set(book.id, {
+						bookChecked: true,
+						selectedChapters: new Set(),
+						expanded: false
+					});
+				} else {
+					this.bookStates.set(book.id, {
+						bookChecked: false,
+						selectedChapters: new Set(selection.chapterIds || []),
+						expanded: false
+					});
+				}
 			}
+			
+			const listEl = contentEl.createEl('div', { cls: 'book-list' });
+			
+			for (const book of this.books) {
+				await this.renderBookRow(listEl, book);
+			}
+			
 			const buttonContainer = contentEl.createEl('div', { cls: 'button-container' });
 			const saveBtn = buttonContainer.createEl('button', { text: 'Save Selection' });
 			saveBtn.addEventListener('click', async () => {
-				this.plugin.settings.selectedBooks = Array.from(this.selectedBooks);
-				await this.plugin.saveSettings();
-				new Notice(`${this.selectedBooks.size} books selected for sync`);
-				this.close();
+				await this.save();
 			});
+			
 		} catch (error: any) {
 			loadingEl.setText(`Error loading books: ${error.message}`);
 			console.error('Error loading books:', error);
 		}
+	}
+
+	async renderBookRow(container: HTMLElement, book: Book) {
+		const state = this.bookStates.get(book.id)!;
+		
+		const bookItemEl = container.createEl('div', { cls: 'book-item' });
+		
+		// Expand/collapse arrow
+		const arrowEl = bookItemEl.createEl('span', { 
+			cls: 'book-arrow',
+			text: state.expanded ? '▼' : '▶'
+		});
+		arrowEl.style.cursor = 'pointer';
+		arrowEl.style.marginRight = '8px';
+		arrowEl.style.display = 'inline-block';
+		arrowEl.style.width = '12px';
+		
+		// Book checkbox
+		const bookCheckbox = bookItemEl.createEl('input', { type: 'checkbox' });
+		bookCheckbox.checked = state.bookChecked;
+		bookCheckbox.indeterminate = !state.bookChecked && state.selectedChapters.size > 0;
+		
+		bookCheckbox.addEventListener('change', () => {
+			if (bookCheckbox.checked) {
+				// User wants to sync full book
+				state.bookChecked = true;
+				state.selectedChapters.clear();
+				this.updateChapterCheckboxes(book.id, true);
+			} else {
+				// User unchecked book
+				state.bookChecked = false;
+				this.updateChapterCheckboxes(book.id, false);
+			}
+			this.updateBookCheckbox(book.id);
+		});
+		
+		// Book label
+		bookItemEl.createEl('label', { text: ` 📚 ${book.name}` });
+		
+		// Chapter container (initially hidden)
+		const chapterContainerEl = container.createEl('div', { 
+			cls: 'chapter-container',
+			attr: { style: 'display: none; margin-left: 30px;' }
+		});
+		
+		// Arrow click handler
+		arrowEl.addEventListener('click', async () => {
+			state.expanded = !state.expanded;
+			arrowEl.setText(state.expanded ? '▼' : '▶');
+			
+			if (state.expanded) {
+				chapterContainerEl.style.display = 'block';
+				if (!state.chapters) {
+					// Load chapters
+					chapterContainerEl.empty();
+					chapterContainerEl.createEl('p', { text: 'Loading chapters...' });
+					try {
+						const bookDetail = await this.plugin.getBook(book.id);
+						state.chapters = bookDetail.contents.filter(c => c.type === 'chapter');
+						chapterContainerEl.empty();
+						
+						if (state.chapters.length === 0) {
+							chapterContainerEl.createEl('p', { 
+								text: 'No chapters in this book',
+								attr: { style: 'font-style: italic; color: #888;' }
+							});
+						} else {
+							for (const chapter of state.chapters) {
+								this.renderChapterRow(chapterContainerEl, chapter, book.id);
+							}
+						}
+					} catch (error) {
+						console.error('Error loading chapters:', error);
+						chapterContainerEl.empty();
+						chapterContainerEl.createEl('p', { 
+							text: 'Error loading chapters',
+							attr: { style: 'color: red;' }
+						});
+					}
+				}
+			} else {
+				chapterContainerEl.style.display = 'none';
+			}
+		});
+		
+		// Store references for later updates
+		(bookItemEl as any).bookCheckbox = bookCheckbox;
+		(bookItemEl as any).chapterContainer = chapterContainerEl;
+		(bookItemEl as any).bookId = book.id;
+	}
+
+	renderChapterRow(container: HTMLElement, chapter: BookContent, bookId: number) {
+		const state = this.bookStates.get(bookId)!;
+		
+		const chapterItemEl = container.createEl('div', { 
+			cls: 'chapter-item',
+			attr: { style: 'margin-left: 20px;' }
+		});
+		
+		const chapterCheckbox = chapterItemEl.createEl('input', { type: 'checkbox' });
+		chapterCheckbox.checked = state.selectedChapters.has(chapter.id);
+		chapterCheckbox.disabled = state.bookChecked;
+		
+		chapterCheckbox.addEventListener('change', () => {
+			if (chapterCheckbox.checked) {
+				state.bookChecked = false;
+				state.selectedChapters.add(chapter.id);
+			} else {
+				state.selectedChapters.delete(chapter.id);
+			}
+			this.updateBookCheckbox(bookId);
+		});
+		
+		chapterItemEl.createEl('label', { text: ` 📂 ${chapter.name}` });
+		
+		// Store reference
+		(chapterItemEl as any).chapterCheckbox = chapterCheckbox;
+		(chapterItemEl as any).chapterId = chapter.id;
+	}
+
+	updateChapterCheckboxes(bookId: number, disable: boolean) {
+		const state = this.bookStates.get(bookId)!;
+		
+		// Find the chapter container for this book
+		const bookItems = this.contentEl.querySelectorAll('.book-item');
+		for (const item of Array.from(bookItems)) {
+			if ((item as any).bookId === bookId) {
+				const chapterContainer = (item as any).chapterContainer;
+				if (chapterContainer) {
+					const chapterCheckboxes = chapterContainer.querySelectorAll('input[type="checkbox"]');
+					for (const cb of Array.from(chapterCheckboxes)) {
+						(cb as HTMLInputElement).disabled = disable;
+						if (disable) {
+							(cb as HTMLInputElement).checked = false;
+						}
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	updateBookCheckbox(bookId: number) {
+		const state = this.bookStates.get(bookId)!;
+		
+		// Find the book checkbox
+		const bookItems = this.contentEl.querySelectorAll('.book-item');
+		for (const item of Array.from(bookItems)) {
+			if ((item as any).bookId === bookId) {
+				const bookCheckbox = (item as any).bookCheckbox as HTMLInputElement;
+				bookCheckbox.checked = state.bookChecked;
+				bookCheckbox.indeterminate = !state.bookChecked && state.selectedChapters.size > 0;
+				break;
+			}
+		}
+	}
+
+	async save() {
+		const syncSelection: BookStackSettings['syncSelection'] = {};
+		
+		for (const [bookId, state] of this.bookStates) {
+			if (state.bookChecked) {
+				syncSelection[bookId] = { mode: 'full' };
+			} else if (state.selectedChapters.size > 0) {
+				syncSelection[bookId] = {
+					mode: 'chapters',
+					chapterIds: Array.from(state.selectedChapters)
+				};
+			}
+		}
+		
+		this.plugin.settings.syncSelection = syncSelection;
+		await this.plugin.saveSettings();
+		
+		const totalBooks = Object.keys(syncSelection).length;
+		const fullBooks = Object.values(syncSelection).filter(s => s.mode === 'full').length;
+		const partialBooks = totalBooks - fullBooks;
+		
+		let message = `Selection saved: ${totalBooks} book${totalBooks !== 1 ? 's' : ''}`;
+		if (partialBooks > 0) {
+			message += ` (${partialBooks} partial)`;
+		}
+		
+		new Notice(message);
+		this.close();
 	}
 
 	onClose() {
