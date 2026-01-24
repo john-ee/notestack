@@ -133,6 +133,7 @@ last_synced: 2024-01-15T14:30:00Z
 - Complex HTML → Markdown conversion may be imperfect
 - Cannot move pages between books/chapters
 - Cannot delete content (sync only updates) - not planned
+  - There are no methods to actually delete. If you delete a file or a folder the synchronization should restore it
 - Large initial syncs may be slow
 
 ### Best For:
@@ -142,8 +143,9 @@ last_synced: 2024-01-15T14:30:00Z
 - Reference documentation with external images
 
 ## Next steps
-- [x] Use frontmatter data from pages for a resilient book and chapter structure
+- [x] Use frontmatter data from pages for a resilient book and chapter structure.
 - [ ] Synchronise at the chapter level for more granular control.
+- [ ] Restore a renaming page feature.
 - [ ] Test out attachment management, more specifically images.
 
 ## Security
@@ -163,6 +165,10 @@ npm run build        # Production build
 ```
 
 ## Changelog
+
+### v0.0.6
+- Refactored the code, notably the Books and Chapter sync logic into a Folder logic called by both
+- Cached the frontmatter data to reduce the numbers of searches inside the page.
 
 ### v0.0.5
 - Fixed a bug that wrote the title of the page in the body when the renaming mechanism ran.
