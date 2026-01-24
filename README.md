@@ -7,7 +7,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Bidirectional Sync** - Automatically syncs based on timestamps with conflict detection
 - **Flexible Sync Modes** - Pull-only, Push-only, or Bidirectional
 - **Interactive Conflict Resolution** - Choose which version to keep when conflicts occur
-- **Selective Book Sync** - Choose which books to synchronize
+- **Selective Book and Chapter Sync** - Choose which books or chapters to synchronize
 - **Auto-Sync** - Configurable automatic syncing at regular intervals (Untested for now - I use manual sync)
 - **Create New Content** - Create pages and chapters directly from Obsidian
 - **Mobile Support** - Full Android and iOS compatibility
@@ -16,16 +16,16 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 
 ## Installation
 
-### From Community Plugins (When Available)
-1. Settings → Community Plugins → Browse
-2. Search "NoteStack" or "BookStack Sync"
-3. Install and enable
-
 ### Manual Installation
 1. Download `main.js`, `manifest.json`, `styles.css` from [latest release](https://github.com/john-ee/notestack/releases/)
 2. Create folder: `<vault>/.obsidian/plugins/notestack/`
 3. Copy files into folder
 4. Settings → Community Plugins → Enable "NoteStack"
+
+### From Community Plugins (When Available)
+1. Settings → Community Plugins → Browse
+2. Search "NoteStack" or "BookStack Sync"
+3. Install and enable
 
 ## Quick Setup
 
@@ -84,8 +84,9 @@ When both local and remote have changes, an interactive modal appears asking whi
 
 **New Pages:**
 1. Create `.md` file in book/chapter folder
-2. Run sync - page created in BookStack automatically
-3. `bookstack_id` added to frontmatter
+2. Add content i the page
+3. Run sync - page created in BookStack automatically
+4. `bookstack_id` added to frontmatter
 
 **New Chapters:**
 1. Create folder in book folder
@@ -144,7 +145,7 @@ last_synced: 2024-01-15T14:30:00Z
 
 ## Next steps
 - [x] Use frontmatter data from pages for a resilient book and chapter structure.
-- [ ] Synchronise at the chapter level for more granular control.
+- [x] Synchronise at the chapter level for more granular control.
 - [ ] Restore a renaming page feature.
 - [ ] Test out attachment management, more specifically images.
 
@@ -165,6 +166,10 @@ npm run build        # Production build
 ```
 
 ## Changelog
+
+### v0.0.7
+- Synchronize at the chapter level instead of synchronizing the full book
+  - Page that are not in chapters will not be synced. These appear only if you sync the full book.
 
 ### v0.0.6
 - Refactored the code, notably the Books and Chapter sync logic into a Folder logic called by both
