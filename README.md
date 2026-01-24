@@ -169,7 +169,7 @@ npm run build        # Production build
 
 ### v0.0.7
 - Synchronize at the chapter level instead of synchronizing the full book
-  - Page that are not in chapters will not be synced. These appear only if you sync the full book.
+  - Pages that are not in chapters will not be synced. These appear only if you sync the full book.
 
 ### v0.0.6
 - Refactored the code, notably the Books and Chapter sync logic into a Folder logic called by both
