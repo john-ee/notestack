@@ -165,6 +165,10 @@ npm run dev          # Development with watch
 npm run build        # Production build
 ```
 
+## Test Matrix
+
+You can review my test matrix [here](https://github.com/john-ee/notestack/blob/main/TEST_MATRIX.md).
+
 ## Changelog
 
 ### v0.0.7
