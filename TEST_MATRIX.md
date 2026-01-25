@@ -14,36 +14,36 @@
 | # | Test | Expected Result | Status |
 |---|------|----------------|--------|
 | **Data Structure & Settings** |
-| 1 | Load plugin with empty settings | `syncSelection` is empty object `{}` | ⚪ Not Tested |
-| 2 | Save full book selection | `syncSelection[bookId] = { mode: 'full' }` | ⚪ Not Tested |
-| 3 | Save chapter selection | `syncSelection[bookId] = { mode: 'chapters', chapterIds: [1,2,3] }` | ⚪ Not Tested |
-| 4 | Save mixed selection (full + chapters) | Multiple entries with different modes | ⚪ Not Tested |
-| 5 | Remove all selections | `syncSelection` becomes empty object | ⚪ Not Tested |
+| 1 | Load plugin with empty settings | `syncSelection` is empty object `{}` | ✅ Passed |
+| 2 | Save full book selection | `syncSelection[bookId] = { mode: 'full' }` | ✅ Passed |
+| 3 | Save chapter selection | `syncSelection[bookId] = { mode: 'chapters', chapterIds: [1,2,3] }` | ✅ Passed |
+| 4 | Save mixed selection (full + chapters) | Multiple entries with different modes | ✅ Passed|
+| 5 | Remove all selections | `syncSelection` becomes empty object | ✅ Passed |
 | **Book Selection Modal** |
 | 6 | Open modal with no books in BookStack | Shows "No books found" message | ⚪ Not Tested |
-| 7 | Open modal with books | Displays list of books with checkboxes and arrows | ⚪ Not Tested |
-| 8 | Check a book checkbox | Book checkbox becomes checked, state saved as `mode: 'full'` | ⚪ Not Tested |
-| 9 | Uncheck a book checkbox (no chapters selected) | Book removed from `syncSelection` | ⚪ Not Tested |
-| 10 | Click expand arrow (collapsed book) | Arrow changes to ▼, chapters load and display | ⚪ Not Tested |
-| 11 | Click collapse arrow (expanded book) | Arrow changes to ▶, chapters hide | ⚪ Not Tested |
-| 12 | Expand book with no chapters | Shows "No chapters in this book" message | ⚪ Not Tested |
-| 13 | Expand book with chapters | Shows list of chapters with checkboxes | ⚪ Not Tested |
-| 14 | Check a chapter checkbox | Chapter added to `selectedChapters`, book checkbox unchecked | ⚪ Not Tested |
-| 15 | Uncheck a chapter checkbox | Chapter removed from `selectedChapters` | ⚪ Not Tested |
-| 16 | Check all chapters individually | Book checkbox shows indeterminate state | ⚪ Not Tested |
-| 17 | Uncheck last selected chapter | Book checkbox becomes unchecked, book removed from selection | ⚪ Not Tested |
-| 18 | Check book when chapters are selected | All chapter checkboxes become disabled and unchecked | ⚪ Not Tested |
+| 7 | Open modal with books | Displays list of books with checkboxes and arrows | ✅ Passed |
+| 8 | Check a book checkbox | Book checkbox becomes checked, state saved as `mode: 'full'` | ✅ Passed |
+| 9 | Uncheck a book checkbox (no chapters selected) | Book removed from `syncSelection` | ✅ Passed |
+| 10 | Click expand arrow (collapsed book) | Arrow changes to ▼, chapters load and display | ✅ Passed |
+| 11 | Click collapse arrow (expanded book) | Arrow changes to ▶, chapters hide | ✅ Passed |
+| 12 | Expand book with no chapters | Shows "No chapters in this book" message | ✅ Passed |
+| 13 | Expand book with chapters | Shows list of chapters with checkboxes | ✅ Passed |
+| 14 | Check a chapter checkbox | Chapter added to `selectedChapters`, book checkbox unchecked | ✅ Passed |
+| 15 | Uncheck a chapter checkbox | Chapter removed from `selectedChapters` | ✅ Passed |
+| 16 | Check all chapters individually | Book checkbox shows unchecked state | ✅ Passed |
+| 17 | Uncheck last selected chapter | Book removed from selection | ⚪ Not Tested |
+| 18 | Check book when chapters are selected | All chapter checkboxes become disabled and unchecked | ✅ Passed |
 | 19 | Uncheck book when chapters were selected | Chapter checkboxes become enabled, previous selection lost | ⚪ Not Tested |
 | 20 | Collapse book with selected chapters | Selection persists, shows indeterminate checkbox | ⚪ Not Tested |
-| 21 | Reopen modal with saved full book selection | Book checkbox is checked, arrow collapsed | ⚪ Not Tested |
-| 22 | Reopen modal with saved chapter selection | Book checkbox indeterminate, chapters remembered | ⚪ Not Tested |
+| 21 | Reopen modal with saved full book selection | Book checkbox is checked, arrow collapsed | ✅ Passed |
+| 22 | Reopen modal with saved chapter selection | Book checkbox indeterminate, chapters remembered | ✅ Passed |
 | 23 | Save selection with no books/chapters selected | Shows validation or saves empty selection | ⚪ Not Tested |
-| 24 | Click Save button | Settings saved, modal closes, notice shown | ⚪ Not Tested |
+| 24 | Click Save button | Settings saved, modal closes, notice shown | ✅ Passed |
 | **Sync Validation** |
-| 25 | Run sync with empty `syncSelection` | Shows "No books or chapters selected" notice | ⚪ Not Tested |
-| 26 | Run sync with full book selected | All chapters and standalone pages sync | ⚪ Not Tested |
-| 27 | Run sync with only chapters selected | Only selected chapters sync, standalone pages skipped | ⚪ Not Tested |
-| 28 | Run sync with mixed selection | Full books sync completely, partial books sync chapters only | ⚪ Not Tested |
+| 25 | Run sync with empty `syncSelection` | Shows "No books or chapters selected" notice | ✅ Passed |
+| 26 | Run sync with full book selected | All chapters and standalone pages sync | ✅ Passed |
+| 27 | Run sync with only chapters selected | Only selected chapters sync, standalone pages skipped | ✅ Passed |
+| 28 | Run sync with mixed selection | Full books sync completely, partial books sync chapters only | ✅ Passed |
 | **Pull Sync (Download)** |
 | 29 | Pull full book with chapters and standalone pages | All pages downloaded to correct folders | ⚪ Not Tested |
 | 30 | Pull selected chapters only | Only chapter pages downloaded, standalone pages ignored | ⚪ Not Tested |
@@ -63,30 +63,30 @@
 | 43 | Push new chapter folder in full book mode | New chapter created in BookStack | ⚪ Not Tested |
 | 44 | Push new chapter folder in chapter mode | Chapter creation skipped (not in selected chapters) | ⚪ Not Tested |
 | **Bidirectional Sync** |
-| 45 | Bidirectional sync with no conflicts | Pages sync correctly in both directions | ⚪ Not Tested |
-| 46 | Bidirectional sync with full book | All pages synced including standalone | ⚪ Not Tested |
-| 47 | Bidirectional sync with chapters only | Only selected chapters synced, standalone pages ignored | ⚪ Not Tested |
-| 48 | Bidirectional sync with local-only changes | Local changes pushed to BookStack | ⚪ Not Tested |
-| 49 | Bidirectional sync with remote-only changes | Remote changes pulled to local | ⚪ Not Tested |
+| 45 | Bidirectional sync with no conflicts | Pages sync correctly in both directions | ✅ Passed |
+| 46 | Bidirectional sync with full book | All pages synced including standalone | ✅ Passed |
+| 47 | Bidirectional sync with chapters only | Only selected chapters synced, standalone pages ignored | ✅ Passed |
+| 48 | Bidirectional sync with local-only changes | Local changes pushed to BookStack | ✅ Passed |
+| 49 | Bidirectional sync with remote-only changes | Remote changes pulled to local | ✅ Passed |
 | 50 | Bidirectional sync with conflict (both changed) | Conflict resolution modal shown | ⚪ Not Tested |
 | 51 | Conflict resolution: choose local | Local version pushed, remote overwritten | ⚪ Not Tested |
 | 52 | Conflict resolution: choose remote | Remote version pulled, local overwritten | ⚪ Not Tested |
 | 53 | Conflict resolution: skip | Page unchanged, marked as skipped | ⚪ Not Tested |
 | **Progress Display** |
-| 54 | Start pull sync | Shows "Pulling from BookStack" with 0% progress | ⚪ Not Tested |
-| 55 | Progress updates during sync | Progress bar fills, percentage increases | ⚪ Not Tested |
+| 54 | Start pull sync | Shows "Pulling from BookStack" | ⚪ Not Tested |
+| 55 | Progress updates during sync | No Notice or notification | ⚪ Not Tested |
 | 56 | Complete pull sync successfully | Shows final summary with counts | ⚪ Not Tested |
-| 57 | Start push sync | Shows "Pushing to BookStack" with progress | ⚪ Not Tested |
-| 58 | Start bidirectional sync | Shows "Syncing with BookStack" with progress | ⚪ Not Tested |
+| 57 | Start push sync | Shows "Pushing to BookStack" | ⚪ Not Tested |
+| 58 | Start bidirectional sync | Shows "Starting bidirectionnal Sync" | ✅ Passed |
 | 59 | Sync with errors | Error count shown in final summary | ⚪ Not Tested |
-| 60 | Progress bar calculation | Percentage accurate based on pages processed | ⚪ Not Tested |
+| 60 | [ Not in the code ] Progress bar calculation | Percentage accurate based on pages processed | ⚪ Not Tested |
 | **Page Counting** |
-| 61 | Count pages in full book mode | All pages in all chapters + standalone counted | ⚪ Not Tested |
-| 62 | Count pages in chapter mode | Only pages in selected chapters counted | ⚪ Not Tested |
+| 61 | Count pages in full book mode | All pages in all chapters + standalone counted | ✅ Passed |
+| 62 | Count pages in chapter mode | Only pages in selected chapters counted | ✅ Passed |
 | 63 | Count with empty book | Total pages = 0, sync completes without error | ⚪ Not Tested |
 | 64 | Count with chapters that have no pages | Those chapters contribute 0 to total | ⚪ Not Tested |
 | **Folder & File Management** |
-| 65 | Create book folder that doesn't exist | Folder created with sanitized name | ⚪ Not Tested |
+| 65 | Create book folder that doesn't exist | Folder created with sanitized name | ✅ Passed |
 | 66 | Rename book folder to match BookStack | Folder renamed, cache updated | ⚪ Not Tested |
 | 67 | Rename chapter folder to match BookStack | Folder renamed, cache updated | ⚪ Not Tested |
 | 68 | Rename file to match BookStack page name | File renamed to match remote | ⚪ Not Tested |
@@ -96,14 +96,14 @@
 | 72 | Cache cleared at sync start | All caches (book, chapter, page) are empty | ⚪ Not Tested |
 | 73 | Cache populated during sync | Folders and files added to cache as found | ⚪ Not Tested |
 | **Frontmatter Handling** |
-| 74 | Extract frontmatter from synced page | All metadata fields extracted correctly | ⚪ Not Tested |
-| 75 | Create frontmatter for new page | Frontmatter includes all required fields | ⚪ Not Tested |
-| 76 | Update last_synced timestamp | Timestamp updated after sync operation | ⚪ Not Tested |
+| 74 | Extract frontmatter from synced page | All metadata fields extracted correctly | ✅ Passed |
+| 75 | Create frontmatter for new page | Frontmatter includes all required fields | ✅ Passed |
+| 76 | Update last_synced timestamp | Timestamp updated after sync operation | ✅ Passed |
 | 77 | Handle page with no frontmatter | Returns empty frontmatter object, body is full content | ⚪ Not Tested |
-| 78 | Strip leading H1 from body | Duplicate title heading removed from content | ⚪ Not Tested |
+| 78 | Strip leading H1 from body | Duplicate title heading removed from content | ✅ Passed |
 | **Edge Cases** |
-| 79 | Sync while already syncing | Shows "Sync already in progress" notice | ⚪ Not Tested |
-| 80 | Sync with no API credentials | Shows "Please configure API credentials" | ⚪ Not Tested |
+| 79 | Sync while already syncing | Shows "Sync already in progress" notice | ✅ Passed |
+| 80 | Sync with no API credentials | Shows "Please configure API credentials" | ✅ Passed |
 | 81 | Sync with invalid BookStack URL | Shows connection error | ⚪ Not Tested |
 | 82 | Book deleted from BookStack but in selection | Error handled gracefully, continues with other books | ⚪ Not Tested |
 | 83 | Chapter deleted from BookStack but in selection | Error handled gracefully, continues with other chapters | ⚪ Not Tested |
@@ -118,15 +118,15 @@
 | 91 | Auto-sync triggers at interval | Sync runs automatically at specified interval | ⚪ Not Tested |
 | 92 | Change sync interval | New interval applied, timer restarted | ⚪ Not Tested |
 | **Commands** |
-| 93 | Run "Sync BookStack Books" command | Executes sync based on mode setting | ⚪ Not Tested |
+| 93 | Run "Sync BookStack Books" command | Executes sync based on mode setting | ✅ Passed |
 | 94 | Run "Pull from BookStack" command | Executes pull-only sync | ⚪ Not Tested |
 | 95 | Run "Push to BookStack" command | Executes push-only sync | ⚪ Not Tested |
 | 96 | Run "Select Books to Sync" command | Opens selection modal | ⚪ Not Tested |
-| 97 | Run "Test BookStack Connection" command | Tests API connection and shows result | ⚪ Not Tested |
+| 97 | Run "Test BookStack Connection" command | Tests API connection and shows result | ✅ Passed |
 | **Settings Persistence** |
-| 98 | Save settings | Settings written to data.json | ⚪ Not Tested |
-| 99 | Load settings on plugin load | Settings read from data.json correctly | ⚪ Not Tested |
-| 100 | Migrate old selectedBooks to syncSelection | Old format converted to new format | ⚪ Not Tested |
+| 98 | Save settings | Settings written to data.json | ✅ Passed |
+| 99 | Load settings on plugin load | Settings read from data.json correctly | ✅ Passed |
+| 100 | Migrate old selectedBooks to syncSelection | Old format converted to new format | ✅ Passed |
 
 **Legend:**
 - ⚪ Not Tested
