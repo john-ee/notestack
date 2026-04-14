@@ -538,35 +538,6 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
-		// Count total items to sync
-		let totalPages = 0;
-		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-			const bookId = Number(bookIdStr);
-			try {
-				const book = await this.getBook(bookId);
-				
-				if (selection.mode === 'full') {
-					// Count all pages in book
-					for (const content of book.contents) {
-						if (content.type === 'chapter') {
-							const chapter = await this.getChapter(content.id);
-							totalPages += chapter.pages?.length || 0;
-						} else if (content.type === 'page') {
-							totalPages++;
-						}
-					}
-				} else {
-					// Count only pages in selected chapters
-					for (const chapterId of selection.chapterIds || []) {
-						const chapter = await this.getChapter(chapterId);
-						totalPages += chapter.pages?.length || 0;
-					}
-				}
-			} catch (error) {
-				console.error(`Error counting pages for book ${bookId}:`, error);
-			}
-		}
-		
 		let pullCount = 0;
 		let skipCount = 0;
 		let errorCount = 0;
@@ -575,13 +546,11 @@ export default class BookStackSyncPlugin extends Plugin {
 			const bookId = Number(bookIdStr);
 			try {
 				if (selection.mode === 'full') {
-					// Sync entire book
 					const result = await this.pullBook(bookId, syncFolder);
 					pullCount += result.pulled;
 					skipCount += result.skipped;
 					errorCount += result.errors;
 				} else {
-					// Sync only selected chapters
 					const book = await this.getBook(bookId);
 					const bookPath = await this.findOrCreateFolderWithRename(
 						bookId,
@@ -621,35 +590,6 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
-		// Count total items
-		let totalPages = 0;
-		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-			const bookId = Number(bookIdStr);
-			try {
-				const book = await this.getBook(bookId);
-				
-				if (selection.mode === 'full') {
-					// Count all pages in book
-					for (const content of book.contents) {
-						if (content.type === 'chapter') {
-							const chapter = await this.getChapter(content.id);
-							totalPages += chapter.pages?.length || 0;
-						} else if (content.type === 'page') {
-							totalPages++;
-						}
-					}
-				} else {
-					// Count only pages in selected chapters
-					for (const chapterId of selection.chapterIds || []) {
-						const chapter = await this.getChapter(chapterId);
-						totalPages += chapter.pages?.length || 0;
-					}
-				}
-			} catch (error) {
-				console.error(`Error counting pages for book ${bookId}:`, error);
-			}
-		}
-		
 		let pushCount = 0;
 		let createCount = 0;
 		let skipCount = 0;
@@ -659,14 +599,12 @@ export default class BookStackSyncPlugin extends Plugin {
 			const bookId = Number(bookIdStr);
 			try {
 				if (selection.mode === 'full') {
-					// Sync entire book
 					const result = await this.pushBook(bookId, syncFolder);
 					pushCount += result.pushed;
 					createCount += result.created;
 					skipCount += result.skipped;
 					errorCount += result.errors;
 				} else {
-					// Sync only selected chapters
 					const book = await this.getBook(bookId);
 					const bookPath = await this.findOrCreateFolderWithRename(
 						bookId,
@@ -707,35 +645,6 @@ export default class BookStackSyncPlugin extends Plugin {
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
 		
-		// Count total items
-		let totalPages = 0;
-		for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-			const bookId = Number(bookIdStr);
-			try {
-				const book = await this.getBook(bookId);
-				
-				if (selection.mode === 'full') {
-					// Count all pages in book
-					for (const content of book.contents) {
-						if (content.type === 'chapter') {
-							const chapter = await this.getChapter(content.id);
-							totalPages += chapter.pages?.length || 0;
-						} else if (content.type === 'page') {
-							totalPages++;
-						}
-					}
-				} else {
-					// Count only pages in selected chapters
-					for (const chapterId of selection.chapterIds || []) {
-						const chapter = await this.getChapter(chapterId);
-						totalPages += chapter.pages?.length || 0;
-					}
-				}
-			} catch (error) {
-				console.error(`Error counting pages for book ${bookId}:`, error);
-			}
-		}
-		
 		let pullCount = 0;
 		let pushCount = 0;
 		let createCount = 0;
@@ -746,7 +655,6 @@ export default class BookStackSyncPlugin extends Plugin {
 			const bookId = Number(bookIdStr);
 			try {
 				if (selection.mode === 'full') {
-					// Sync entire book
 					const result = await this.syncBookBidirectional(bookId, syncFolder);
 					pullCount += result.pulled;
 					pushCount += result.pushed;
@@ -754,7 +662,6 @@ export default class BookStackSyncPlugin extends Plugin {
 					skipCount += result.skipped;
 					errorCount += result.errors;
 				} else {
-					// Sync only selected chapters
 					const book = await this.getBook(bookId);
 					const bookPath = await this.findOrCreateFolderWithRename(
 						bookId,
@@ -1003,6 +910,25 @@ export default class BookStackSyncPlugin extends Plugin {
 		return { pulled, pushed, created, skipped, errors };
 	}
 
+	// ─────────────────────────────────────────────────────────────
+	// FIX 1: syncLocalPages
+	//
+	// BEFORE: the code read the raw file into `content`, extracted
+	// frontmatter/body, but then passed `body` directly to createPage.
+	// The problem was twofold:
+	//   a) `body` was never stripped of its leading title (H1), so
+	//      BookStack received a duplicate title as the first line of
+	//      the page content.
+	//   b) For files with no frontmatter block, `extractFrontmatter`
+	//      returned the full raw file as `body`, meaning any accidental
+	//      `---` separator in the content could corrupt parsing.
+	//
+	// AFTER: `body` (already correctly extracted by extractFrontmatter)
+	// is now passed through `stripLeadingTitleFromBody` before being
+	// sent to `createPage`, exactly mirroring what the push path does.
+	// This ensures no duplicate H1 title is uploaded and the content
+	// sent is always the clean body portion only.
+	// ─────────────────────────────────────────────────────────────
 	async syncLocalPages(folderPath: string, book: BookDetail, chapter?: Chapter): Promise<{ created: number; errors: number }> {
 		let created = 0;
 		let errors = 0;
@@ -1015,8 +941,6 @@ export default class BookStackSyncPlugin extends Plugin {
 			// First, handle subdirectories (potential new chapters)
 			for (const item of folder.children) {
 				if (item instanceof TFolder) {
-					// This is a subfolder - check if it should be a chapter
-					// Only create chapters at the book level (not nested chapters)
 					if (!chapter) {
 						await this.handlePotentialNewChapter(item, book);
 					}
@@ -1033,10 +957,17 @@ export default class BookStackSyncPlugin extends Plugin {
 				if (!frontmatter.bookstack_id) {
 					try {
 						console.log(`Creating new page in BookStack: ${file.basename}`);
+
+						// FIX 1: Strip leading H1 title from body before uploading,
+						// matching behaviour of the push path. Without this, BookStack
+						// would receive the page title both in the `name` field and as
+						// an H1 at the top of the content, displaying it twice.
+						const cleanedBody = this.stripLeadingTitleFromBody(body, file.basename);
+
 						const newPage = await this.createPage(
 							book.id,
 							file.basename,
-							body,
+							cleanedBody,   // ← was `body` before this fix
 							chapter?.id
 						);
 
@@ -1054,6 +985,8 @@ export default class BookStackSyncPlugin extends Plugin {
 						frontmatter.last_synced = new Date().toISOString();
 						frontmatter.title = file.basename;
 
+						// Reconstruct file with frontmatter + original body (not cleanedBody),
+						// so the local file is unchanged in structure — only the upload is cleaned.
 						const updatedContent = this.createFrontmatter(frontmatter) + body;
 						await this.app.vault.modify(file, updatedContent);
 						new Notice(`Created page in BookStack: ${file.basename}`);
@@ -1073,10 +1006,8 @@ export default class BookStackSyncPlugin extends Plugin {
 	}
 
 	async handlePotentialNewChapter(folder: TFolder, book: BookDetail): Promise<void> {
-		// Check if this folder already corresponds to an existing chapter
 		const folderName = folder.name;
 		
-		// Look for any .md file in this folder that has chapter_id in frontmatter
 		let existingChapterId: number | null = null;
 		
 		for (const file of folder.children) {
@@ -1090,14 +1021,12 @@ export default class BookStackSyncPlugin extends Plugin {
 			}
 		}
 		
-		// If no chapter_id found, this might be a new chapter
 		if (!existingChapterId) {
 			try {
 				console.log(`Creating new chapter in BookStack: ${folderName}`);
 				const newChapter = await this.createChapter(book.id, folderName);
 				new Notice(`Created chapter in BookStack: ${folderName}`);
 				
-				// Now sync the pages in this new chapter
 				const chapterResult = await this.syncLocalPages(folder.path, book, newChapter);
 				console.log(`Synced ${chapterResult.created} pages in new chapter ${folderName}`);
 			} catch (error) {
@@ -1105,7 +1034,6 @@ export default class BookStackSyncPlugin extends Plugin {
 				new Notice(`Failed to create chapter: ${folderName}`);
 			}
 		} else {
-			// Chapter already exists, sync its pages normally
 			console.log(`[BookStack] Existing chapter detected: ${folderName} (ID: ${existingChapterId})`);
 		}
 	}
@@ -1115,10 +1043,8 @@ export default class BookStackSyncPlugin extends Plugin {
 		try {
 			const page = await this.getPage(pageId);
 			
-			// First, try to find existing file by bookstack_id
 			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
 			
-			// Rename file if needed
 			if (existingFile) {
 				existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
 			}
@@ -1149,14 +1075,12 @@ export default class BookStackSyncPlugin extends Plugin {
 		try {
 			const page = await this.getPage(pageId);
 			
-			// Find existing file by bookstack_id
 			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
 			
 			if (!existingFile) {
-				return 'skipped'; // No local file to push
+				return 'skipped';
 			}
 			
-			// Rename file if needed
 			existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
 
 			const localContent = await this.app.vault.read(existingFile);
@@ -1183,10 +1107,8 @@ export default class BookStackSyncPlugin extends Plugin {
 		try {
 			const page = await this.getPage(pageId);
 			
-			// Find existing file by bookstack_id
 			let existingFile = await this.findFileByBookStackId(pageId, parentPath);
 			
-			// Rename file if needed
 			if (existingFile) {
 				existingFile = await this.renameFileIfNeeded(existingFile, page.name, parentPath);
 			}
@@ -1245,7 +1167,6 @@ export default class BookStackSyncPlugin extends Plugin {
 							modal.open();
 						});
 					} else {
-						// Local is newer, push
 						if (!(existingFile instanceof TFile)) {
 							throw new Error('Expected existing local file while pushing newer local version.');
 						}
@@ -1255,7 +1176,6 @@ export default class BookStackSyncPlugin extends Plugin {
 						return 'pushed'
 					}
 				} else {
-					// No local changes, pull if remote is newer
 					if (!lastSynced || remoteUpdated > lastSynced) {
 						await this.pullPage(page, expectedFilePath, book, chapter);
 						return 'pulled';
@@ -1264,7 +1184,6 @@ export default class BookStackSyncPlugin extends Plugin {
 					}
 				}
 			} else {
-				// File doesn't exist locally, pull it
 				await this.pullPage(page, expectedFilePath, book, chapter);
 				return 'pulled';
 			}
@@ -1274,37 +1193,37 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 	}
 
-async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter): Promise<void> {
-	let content = '';
-	try {
-		content = await this.exportPageMarkdown(page.id);
-	} catch (error) {
-		console.log(`Markdown export failed for page ${page.id}, converting HTML`);
-		content = this.htmlToMarkdown(page.html);
+	async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter): Promise<void> {
+		let content = '';
+		try {
+			content = await this.exportPageMarkdown(page.id);
+		} catch (error) {
+			console.log(`Markdown export failed for page ${page.id}, converting HTML`);
+			content = this.htmlToMarkdown(page.html);
+		}
+
+		content = this.stripLeadingTitleFromBody(content, page.name);
+
+		const metadata: PageFrontmatter = {
+			title: page.name,
+			bookstack_id: page.id,
+			book_id: book.id,
+			chapter_id: chapter?.id ?? null,
+			book_name: (book as Book).name,
+			book_description: (book as Book).description,
+			created: page.created_at,
+			updated: page.updated_at,
+			last_synced: new Date().toISOString()
+		};
+
+		if (chapter) {
+			metadata.chapter_name = chapter.name;
+			metadata.chapter_description = chapter.description;
+		}
+
+		const fullContent = this.createFrontmatter(metadata) + content;
+		await this.createOrUpdateFile(filePath, fullContent);
 	}
-
-	content = this.stripLeadingTitleFromBody(content, page.name);
-
-	const metadata: PageFrontmatter = {
-		title: page.name,
-		bookstack_id: page.id,
-		book_id: book.id,
-		chapter_id: chapter?.id ?? null,
-		book_name: (book as Book).name,
-		book_description: (book as Book).description,
-		created: page.created_at,
-		updated: page.updated_at,
-		last_synced: new Date().toISOString()
-	};
-
-	if (chapter) {
-		metadata.chapter_name = chapter.name;
-		metadata.chapter_description = chapter.description;
-	}
-
-	const fullContent = this.createFrontmatter(metadata) + content;
-	await this.createOrUpdateFile(filePath, fullContent);
-}
 
 	async getRemotePageContent(page: Page): Promise<string> {
 		try {
@@ -1354,14 +1273,11 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 	}
 
 	async findFileByBookStackId(pageId: number, parentPath: string): Promise<TFile | null> {
-		// Check cache first
 		if (this.pageFolderCache.has(pageId)) {
 			const cachedFile = this.pageFolderCache.get(pageId)!;
-			// Verify file still exists and is in correct path
 			if (cachedFile.parent?.path === parentPath) {
 				return cachedFile;
 			}
-			// Cache is stale, remove it
 			this.pageFolderCache.delete(pageId);
 		}
 		
@@ -1374,11 +1290,9 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 			if (!(file instanceof TFile) || file.extension !== 'md') continue;
 			
 			try {
-				// Use optimized frontmatter-only extraction
 				const frontmatter = await this.extractFrontmatterOnly(file);
 				
 				if (frontmatter.bookstack_id === pageId) {
-					// Cache the result
 					this.pageFolderCache.set(pageId, file);
 					return file;
 				}
@@ -1391,7 +1305,6 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 	}
 
 	async findBookFolderByBookId(bookId: number, basePath: string): Promise<string | null> {
-		// Check cache first
 		if (this.bookFolderCache.has(bookId)) {
 			return this.bookFolderCache.get(bookId)!;
 		}
@@ -1399,14 +1312,11 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		const baseFolder = this.app.vault.getAbstractFileByPath(basePath);
 		if (!(baseFolder instanceof TFolder)) return null;
 		
-		// Check each subfolder in basePath
 		for (const item of baseFolder.children) {
 			if (!(item instanceof TFolder)) continue;
 			
-			// Look for any page in this folder with matching book_id
 			const hasMatchingPage = await this.folderContainsBookId(item, bookId);
 			if (hasMatchingPage) {
-				// Cache the result
 				this.bookFolderCache.set(bookId, item.path);
 				return item.path;
 			}
@@ -1419,7 +1329,6 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		for (const file of folder.children) {
 			if (file instanceof TFile && file.extension === 'md') {
 				try {
-					// Use optimized frontmatter-only extraction
 					const frontmatter = await this.extractFrontmatterOnly(file);
 					if (frontmatter.book_id === bookId) {
 						return true;
@@ -1428,7 +1337,6 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 					// Continue checking other files
 				}
 			}
-			// Also check subfolders (for chapters)
 			if (file instanceof TFolder) {
 				const found = await this.folderContainsBookId(file, bookId);
 				if (found) return true;
@@ -1438,7 +1346,6 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 	}
 
 	async findChapterFolderByChapterId(chapterId: number, bookPath: string): Promise<string | null> {
-		// Check cache first
 		if (this.chapterFolderCache.has(chapterId)) {
 			return this.chapterFolderCache.get(chapterId)!;
 		}
@@ -1446,14 +1353,11 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		const bookFolder = this.app.vault.getAbstractFileByPath(bookPath);
 		if (!(bookFolder instanceof TFolder)) return null;
 		
-		// Check each subfolder in book
 		for (const item of bookFolder.children) {
 			if (!(item instanceof TFolder)) continue;
 			
-			// Look for any page in this folder with matching chapter_id
 			const hasMatchingPage = await this.folderContainsChapterId(item, chapterId);
 			if (hasMatchingPage) {
-				// Cache the result
 				this.chapterFolderCache.set(chapterId, item.path);
 				return item.path;
 			}
@@ -1466,7 +1370,6 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		for (const file of folder.children) {
 			if (file instanceof TFile && file.extension === 'md') {
 				try {
-					// Use optimized frontmatter-only extraction
 					const frontmatter = await this.extractFrontmatterOnly(file);
 					if (frontmatter.chapter_id === chapterId) {
 						return true;
@@ -1479,6 +1382,25 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		return false;
 	}
 
+	// ─────────────────────────────────────────────────────────────
+	// FIX 2: findOrCreateFolderWithRename
+	//
+	// BEFORE: the rename call was:
+	//   await this.app.fileManager.renameFile(existingFolder, expectedNameSanitized);
+	//
+	// `renameFile`'s second argument must be the FULL vault-relative
+	// destination path, not just the new folder name. Passing only the
+	// name caused Obsidian to move the folder to the vault root instead
+	// of renaming it in place, silently restructuring the vault.
+	//
+	// AFTER: the full destination path is constructed by combining the
+	// folder's current parent path with the new sanitized name:
+	//   const renamedPath = `${existingFolder.parent!.path}/${expectedNameSanitized}`;
+	//   await this.app.fileManager.renameFile(existingFolder, renamedPath);
+	//
+	// The cache and return value are then updated to use `renamedPath`
+	// so subsequent lookups in the same sync run remain consistent.
+	// ─────────────────────────────────────────────────────────────
 	async findOrCreateFolderWithRename(
 		folderId: number,
 		expectedName: string,
@@ -1499,40 +1421,47 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 		// Expected path based on current name from BookStack
 		const sanitizedName = this.sanitizeFileName(expectedName);
 		const expectedPath = `${parentPath}/${sanitizedName}`;
+
+		// Track the final resolved path — may be updated after a rename
+		let finalPath = existingPath || expectedPath;
 		
-		// If folder exists, check if name matches
+		// If folder exists, check if name matches and rename if needed
 		if (existingPath) {
 			const existingFolder = this.app.vault.getAbstractFileByPath(existingPath);
 			if (existingFolder instanceof TFolder) {
 				const currentName = existingFolder.name;
-				const expectedNameSanitized = sanitizedName;
-				
-				// Compare just the folder names, not full paths
-				if (currentName !== expectedNameSanitized) {
-					console.log(`[BookStack] Detected renamed ${folderType}: "${currentName}" should be "${expectedNameSanitized}"`);
-					console.log(`[BookStack] Renaming ${folderType} folder: ${existingPath} → ${expectedPath}`);
-					
-					//TODO : test 
+
+				if (currentName !== sanitizedName) {
+					console.log(`[BookStack] Detected renamed ${folderType}: "${currentName}" → "${sanitizedName}"`);
+
+					// FIX 2: Build the full vault-relative destination path.
+					// existingFolder.parent is the containing folder (e.g. "BookStack").
+					// Without the parent path prefix, renameFile moves the folder
+					// to the vault root instead of renaming it in place.
+					const renamedPath = `${existingFolder.parent!.path}/${sanitizedName}`;
+
 					try {
-						await this.app.fileManager.renameFile(existingFolder, expectedNameSanitized);
-						console.log(`[BookStack] Successfully renamed ${folderType} folder to match BookStack`);
+						await this.app.fileManager.renameFile(existingFolder, renamedPath);
+						console.log(`[BookStack] Successfully renamed ${folderType} folder to: ${renamedPath}`);
+						// Update finalPath so the cache and return value reflect the new location
+						finalPath = renamedPath;
 					} catch (error) {
 						console.error(`[BookStack] Failed to rename ${folderType} folder:`, error);
-						// If rename fails, use existing path
+						// On failure keep the existing path so the sync can continue
+						finalPath = existingPath;
 					}
 				}
+				// If names already match, finalPath is already set to existingPath above
 			}
 		}
 		
-		const finalPath = existingPath || expectedPath;
-		
-		// Only create folder if it doesn't exist
+		// Only create folder if it doesn't already exist
 		if (!existingPath) {
 			await this.ensureFolderExists(finalPath);
 			console.log(`[BookStack] Created new ${folderType} folder: ${finalPath}`);
 		}
 		
-		// Update cache with final path
+		// Update cache with final resolved path
 		if (folderType === 'book') {
 			this.bookFolderCache.set(folderId, finalPath);
 		} else if (folderType === 'chapter') {
@@ -1556,12 +1485,8 @@ async pullPage(page: Page, filePath: string, book: BookDetail, chapter?: Chapter
 	}
 
 	shouldSkipFile(file: TFile): boolean {
-		// Skip non-markdown files
 		if (file.extension !== this.MARKDOWN_EXTENSION) return true;
-		
-		// Skip README files
 		if (file.name === this.README_FILENAME) return true;
-		
 		return false;
 	}
 
@@ -1679,7 +1604,6 @@ class BookSelectionModal extends Modal {
 				return;
 			}
 			
-			// Initialize book states from settings
 			for (const book of this.books) {
 				const selection = this.plugin.settings.syncSelection[book.id];
 				
@@ -1727,7 +1651,6 @@ class BookSelectionModal extends Modal {
 		
 		const bookItemEl = container.createEl('div', { cls: 'book-item' });
 		
-		// Expand/collapse arrow
 		const arrowEl = bookItemEl.createEl('span', { 
 			cls: 'book-arrow',
 			text: state.expanded ? '▼' : '▶'
@@ -1737,35 +1660,29 @@ class BookSelectionModal extends Modal {
 		arrowEl.style.display = 'inline-block';
 		arrowEl.style.width = '12px';
 		
-		// Book checkbox
 		const bookCheckbox = bookItemEl.createEl('input', { type: 'checkbox' });
 		bookCheckbox.checked = state.bookChecked;
 		bookCheckbox.indeterminate = !state.bookChecked && state.selectedChapters.size > 0;
 		
 		bookCheckbox.addEventListener('change', () => {
 			if (bookCheckbox.checked) {
-				// User wants to sync full book
 				state.bookChecked = true;
 				state.selectedChapters.clear();
 				this.updateChapterCheckboxes(book.id, true);
 			} else {
-				// User unchecked book
 				state.bookChecked = false;
 				this.updateChapterCheckboxes(book.id, false);
 			}
 			this.updateBookCheckbox(book.id);
 		});
 		
-		// Book label
 		bookItemEl.createEl('label', { text: ` 📚 ${book.name}` });
 		
-		// Chapter container (initially hidden)
 		const chapterContainerEl = container.createEl('div', { 
 			cls: 'chapter-container',
 			attr: { style: 'display: none; margin-left: 30px;' }
 		});
 		
-		// Arrow click handler
 		arrowEl.addEventListener('click', async () => {
 			state.expanded = !state.expanded;
 			arrowEl.setText(state.expanded ? '▼' : '▶');
@@ -1773,7 +1690,6 @@ class BookSelectionModal extends Modal {
 			if (state.expanded) {
 				chapterContainerEl.style.display = 'block';
 				if (!state.chapters) {
-					// Load chapters
 					chapterContainerEl.empty();
 					chapterContainerEl.createEl('p', { text: 'Loading chapters...' });
 					try {
@@ -1805,7 +1721,6 @@ class BookSelectionModal extends Modal {
 			}
 		});
 		
-		// Store references for later updates
 		(bookItemEl as any).bookCheckbox = bookCheckbox;
 		(bookItemEl as any).chapterContainer = chapterContainerEl;
 		(bookItemEl as any).bookId = book.id;
@@ -1835,15 +1750,11 @@ class BookSelectionModal extends Modal {
 		
 		chapterItemEl.createEl('label', { text: ` 📂 ${chapter.name}` });
 		
-		// Store reference
 		(chapterItemEl as any).chapterCheckbox = chapterCheckbox;
 		(chapterItemEl as any).chapterId = chapter.id;
 	}
 
 	updateChapterCheckboxes(bookId: number, disable: boolean) {
-		const state = this.bookStates.get(bookId)!;
-		
-		// Find the chapter container for this book
 		const bookItems = this.contentEl.querySelectorAll('.book-item');
 		for (const item of Array.from(bookItems)) {
 			if ((item as any).bookId === bookId) {
@@ -1865,7 +1776,6 @@ class BookSelectionModal extends Modal {
 	updateBookCheckbox(bookId: number) {
 		const state = this.bookStates.get(bookId)!;
 		
-		// Find the book checkbox
 		const bookItems = this.contentEl.querySelectorAll('.book-item');
 		for (const item of Array.from(bookItems)) {
 			if ((item as any).bookId === bookId) {
@@ -1953,27 +1863,22 @@ class ConflictResolutionModal extends Modal {
 			cls: 'conflict-description'
 		});
 
-		// Timestamps comparison
 		const timingEl = contentEl.createEl('div', { cls: 'conflict-timing' });
 		timingEl.createEl('p', { text: `Local modified: ${this.localModified.toLocaleString()}` });
 		timingEl.createEl('p', { text: `Remote modified: ${this.remoteModified.toLocaleString()}` });
 
-		// Preview sections
 		const previewContainer = contentEl.createEl('div', { cls: 'conflict-preview-container' });
 
-		// Local preview
 		const localPreview = previewContainer.createEl('div', { cls: 'conflict-preview' });
 		localPreview.createEl('h3', { text: '📝 Local Version (Obsidian)' });
 		const localPre = localPreview.createEl('pre', { cls: 'conflict-content' });
 		localPre.textContent = this.truncateContent(this.localContent);
 
-		// Remote preview
 		const remotePreview = previewContainer.createEl('div', { cls: 'conflict-preview' });
 		remotePreview.createEl('h3', { text: '☁️ Remote Version (BookStack)' });
 		const remotePre = remotePreview.createEl('pre', { cls: 'conflict-content' });
 		remotePre.textContent = this.truncateContent(this.remoteContent);
 
-		// Buttons
 		const buttonContainer = contentEl.createEl('div', { cls: 'conflict-buttons' });
 
 		const keepLocalBtn = buttonContainer.createEl('button', { 

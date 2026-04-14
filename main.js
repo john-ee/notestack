@@ -435,37 +435,12 @@ Check console for details`);
     }
   }
   async pullFromBookStack() {
-    var _a, _b;
     new import_obsidian.Notice("Pulling from BookStack...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
-    let totalPages = 0;
-    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-      const bookId = Number(bookIdStr);
-      try {
-        const book = await this.getBook(bookId);
-        if (selection.mode === "full") {
-          for (const content of book.contents) {
-            if (content.type === "chapter") {
-              const chapter = await this.getChapter(content.id);
-              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
-            } else if (content.type === "page") {
-              totalPages++;
-            }
-          }
-        } else {
-          for (const chapterId of selection.chapterIds || []) {
-            const chapter = await this.getChapter(chapterId);
-            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
-          }
-        }
-      } catch (error) {
-        console.error(`Error counting pages for book ${bookId}:`, error);
-      }
-    }
     let pullCount = 0;
     let skipCount = 0;
     let errorCount = 0;
@@ -508,37 +483,12 @@ Check console for details`);
     new import_obsidian.Notice(`Pull complete: ${summary.join(", ")}`);
   }
   async pushToBookStack() {
-    var _a, _b;
     new import_obsidian.Notice("Pushing to BookStack...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
-    let totalPages = 0;
-    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-      const bookId = Number(bookIdStr);
-      try {
-        const book = await this.getBook(bookId);
-        if (selection.mode === "full") {
-          for (const content of book.contents) {
-            if (content.type === "chapter") {
-              const chapter = await this.getChapter(content.id);
-              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
-            } else if (content.type === "page") {
-              totalPages++;
-            }
-          }
-        } else {
-          for (const chapterId of selection.chapterIds || []) {
-            const chapter = await this.getChapter(chapterId);
-            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
-          }
-        }
-      } catch (error) {
-        console.error(`Error counting pages for book ${bookId}:`, error);
-      }
-    }
     let pushCount = 0;
     let createCount = 0;
     let skipCount = 0;
@@ -585,37 +535,12 @@ Check console for details`);
     new import_obsidian.Notice(`Push complete: ${summary.join(", ")}`);
   }
   async bidirectionalSync() {
-    var _a, _b;
     new import_obsidian.Notice("Starting bidirectional sync...");
     this.bookFolderCache.clear();
     this.chapterFolderCache.clear();
     this.pageFolderCache.clear();
     const syncFolder = this.settings.syncFolder;
     await this.ensureFolderExists(syncFolder);
-    let totalPages = 0;
-    for (const [bookIdStr, selection] of Object.entries(this.settings.syncSelection)) {
-      const bookId = Number(bookIdStr);
-      try {
-        const book = await this.getBook(bookId);
-        if (selection.mode === "full") {
-          for (const content of book.contents) {
-            if (content.type === "chapter") {
-              const chapter = await this.getChapter(content.id);
-              totalPages += ((_a = chapter.pages) == null ? void 0 : _a.length) || 0;
-            } else if (content.type === "page") {
-              totalPages++;
-            }
-          }
-        } else {
-          for (const chapterId of selection.chapterIds || []) {
-            const chapter = await this.getChapter(chapterId);
-            totalPages += ((_b = chapter.pages) == null ? void 0 : _b.length) || 0;
-          }
-        }
-      } catch (error) {
-        console.error(`Error counting pages for book ${bookId}:`, error);
-      }
-    }
     let pullCount = 0;
     let pushCount = 0;
     let createCount = 0;
@@ -905,6 +830,25 @@ Check console for details`);
     }
     return { pulled, pushed, created, skipped, errors };
   }
+  // ─────────────────────────────────────────────────────────────
+  // FIX 1: syncLocalPages
+  //
+  // BEFORE: the code read the raw file into `content`, extracted
+  // frontmatter/body, but then passed `body` directly to createPage.
+  // The problem was twofold:
+  //   a) `body` was never stripped of its leading title (H1), so
+  //      BookStack received a duplicate title as the first line of
+  //      the page content.
+  //   b) For files with no frontmatter block, `extractFrontmatter`
+  //      returned the full raw file as `body`, meaning any accidental
+  //      `---` separator in the content could corrupt parsing.
+  //
+  // AFTER: `body` (already correctly extracted by extractFrontmatter)
+  // is now passed through `stripLeadingTitleFromBody` before being
+  // sent to `createPage`, exactly mirroring what the push path does.
+  // This ensures no duplicate H1 title is uploaded and the content
+  // sent is always the clean body portion only.
+  // ─────────────────────────────────────────────────────────────
   async syncLocalPages(folderPath, book, chapter) {
     var _a;
     let created = 0;
@@ -929,10 +873,12 @@ Check console for details`);
         if (!frontmatter.bookstack_id) {
           try {
             console.log(`Creating new page in BookStack: ${file.basename}`);
+            const cleanedBody = this.stripLeadingTitleFromBody(body, file.basename);
             const newPage = await this.createPage(
               book.id,
               file.basename,
-              body,
+              cleanedBody,
+              // ← was `body` before this fix
               chapter == null ? void 0 : chapter.id
             );
             frontmatter.bookstack_id = newPage.id;
@@ -1286,6 +1232,25 @@ Check console for details`);
     }
     return false;
   }
+  // ─────────────────────────────────────────────────────────────
+  // FIX 2: findOrCreateFolderWithRename
+  //
+  // BEFORE: the rename call was:
+  //   await this.app.fileManager.renameFile(existingFolder, expectedNameSanitized);
+  //
+  // `renameFile`'s second argument must be the FULL vault-relative
+  // destination path, not just the new folder name. Passing only the
+  // name caused Obsidian to move the folder to the vault root instead
+  // of renaming it in place, silently restructuring the vault.
+  //
+  // AFTER: the full destination path is constructed by combining the
+  // folder's current parent path with the new sanitized name:
+  //   const renamedPath = `${existingFolder.parent!.path}/${expectedNameSanitized}`;
+  //   await this.app.fileManager.renameFile(existingFolder, renamedPath);
+  //
+  // The cache and return value are then updated to use `renamedPath`
+  // so subsequent lookups in the same sync run remain consistent.
+  // ─────────────────────────────────────────────────────────────
   async findOrCreateFolderWithRename(folderId, expectedName, parentPath, finderFn, folderType) {
     if (folderType === "book") {
       this.bookFolderCache.delete(folderId);
@@ -1295,24 +1260,25 @@ Check console for details`);
     let existingPath = await finderFn(folderId, parentPath);
     const sanitizedName = this.sanitizeFileName(expectedName);
     const expectedPath = `${parentPath}/${sanitizedName}`;
+    let finalPath = existingPath || expectedPath;
     if (existingPath) {
       const existingFolder = this.app.vault.getAbstractFileByPath(existingPath);
       if (existingFolder instanceof import_obsidian.TFolder) {
         const currentName = existingFolder.name;
-        const expectedNameSanitized = sanitizedName;
-        if (currentName !== expectedNameSanitized) {
-          console.log(`[BookStack] Detected renamed ${folderType}: "${currentName}" should be "${expectedNameSanitized}"`);
-          console.log(`[BookStack] Renaming ${folderType} folder: ${existingPath} \u2192 ${expectedPath}`);
+        if (currentName !== sanitizedName) {
+          console.log(`[BookStack] Detected renamed ${folderType}: "${currentName}" \u2192 "${sanitizedName}"`);
+          const renamedPath = `${existingFolder.parent.path}/${sanitizedName}`;
           try {
-            await this.app.fileManager.renameFile(existingFolder, expectedNameSanitized);
-            console.log(`[BookStack] Successfully renamed ${folderType} folder to match BookStack`);
+            await this.app.fileManager.renameFile(existingFolder, renamedPath);
+            console.log(`[BookStack] Successfully renamed ${folderType} folder to: ${renamedPath}`);
+            finalPath = renamedPath;
           } catch (error) {
             console.error(`[BookStack] Failed to rename ${folderType} folder:`, error);
+            finalPath = existingPath;
           }
         }
       }
     }
-    const finalPath = existingPath || expectedPath;
     if (!existingPath) {
       await this.ensureFolderExists(finalPath);
       console.log(`[BookStack] Created new ${folderType} folder: ${finalPath}`);
@@ -1562,7 +1528,6 @@ var BookSelectionModal = class extends import_obsidian.Modal {
     chapterItemEl.chapterId = chapter.id;
   }
   updateChapterCheckboxes(bookId, disable) {
-    const state = this.bookStates.get(bookId);
     const bookItems = this.contentEl.querySelectorAll(".book-item");
     for (const item of Array.from(bookItems)) {
       if (item.bookId === bookId) {
