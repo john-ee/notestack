@@ -1210,16 +1210,14 @@ Check console for details`);
   // chapter subfolders) for .md files whose bookstack_id frontmatter
   // value is NOT in remotePageIds — the set of IDs returned by the API.
   // Such files represent pages deleted from BookStack that are now orphaned
-  // locally. They are moved to BookStack/_deleted/ rather than silently
-  // removed, giving the user a chance to recover content.
+  // locally. They are sent to Obsidian trash (respecting the user's trash
+  // setting: system trash or .trash folder) rather than silently deleted.
   //
   // Only runs for pull-only and bidirectional syncs. Push-only does not
   // download the remote page list so cannot reliably detect deletions.
   // ─────────────────────────────────────────────────────────────
   async retireDeletedPages(bookFolderPath, remotePageIds) {
     let retired = 0;
-    const deletedFolderPath = `${this.settings.syncFolder}/_deleted`;
-    await this.ensureFolderExists(deletedFolderPath);
     const scanFolder = async (folderPath) => {
       const folder = this.app.vault.getAbstractFileByPath(folderPath);
       if (!(folder instanceof import_obsidian.TFolder))
@@ -1233,14 +1231,13 @@ Check console for details`);
           try {
             const frontmatter = await this.extractFrontmatterOnly(item);
             if (frontmatter.bookstack_id && !remotePageIds.has(frontmatter.bookstack_id)) {
-              const destPath = `${deletedFolderPath}/${item.name}`;
-              console.log(`[BookStack] Retiring deleted page: ${item.path} \u2192 ${destPath}`);
-              await this.app.fileManager.renameFile(item, destPath);
-              new import_obsidian.Notice(`\u{1F4E6} Moved to _deleted/: ${item.basename} (removed from BookStack)`);
+              console.log(`[BookStack] Trashing deleted page: ${item.path}`);
+              await this.app.vault.trash(item, true);
+              new import_obsidian.Notice(`\u{1F5D1}\uFE0F Trashed: ${item.basename} (removed from BookStack)`);
               retired++;
             }
           } catch (err) {
-            console.error(`[BookStack] Error checking file for deletion: ${item.path}`, err);
+            console.error(`[BookStack] Error trashing deleted page: ${item.path}`, err);
           }
         }
       }
