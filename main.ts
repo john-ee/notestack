@@ -14,6 +14,11 @@ interface BookStackSettings {
 	autoSync: boolean;
 	syncInterval: number;
 	syncMode: 'pull-only' | 'push-only' | 'bidirectional';
+	// FIX 4: Persisted map of vault folder path → BookStack chapter ID.
+	// Keyed by the folder's full vault-relative path (e.g. "BookStack/My Book/My Chapter").
+	// Populated when a new chapter is created from a local folder, and checked
+	// before creating a chapter so we never create duplicates across sync runs.
+	knownChapterFolders: { [folderPath: string]: number };
 }
 
 const DEFAULT_SETTINGS: BookStackSettings = {
@@ -24,7 +29,8 @@ const DEFAULT_SETTINGS: BookStackSettings = {
 	syncSelection: {},
 	autoSync: false,
 	syncInterval: 60,
-	syncMode: 'bidirectional'
+	syncMode: 'bidirectional',
+	knownChapterFolders: {}
 }
 
 interface Book {
@@ -80,6 +86,8 @@ interface PageFrontmatter {
 	created?: string;
 	updated?: string;
 	last_synced?: string;
+	// FIX 3: Hash of page body at last sync/push for change detection.
+	body_hash?: string;
 }
 
 export default class BookStackSyncPlugin extends Plugin {
@@ -91,7 +99,6 @@ export default class BookStackSyncPlugin extends Plugin {
 	private pageFolderCache: Map<number, TFile> = new Map();
 
 	// Constants
-	private readonly SYNC_TIME_BUFFER_MS = 1000;
 	private readonly README_FILENAME = 'README.md';
 	private readonly MARKDOWN_EXTENSION = 'md';
 
@@ -365,7 +372,7 @@ export default class BookStackSyncPlugin extends Plugin {
 				} else if (value === 'null' || value === '') {
 					(frontmatter as any)[key] = null as any;
 				}
-			} else if (['title', 'book_name', 'chapter_name', 'book_description', 'chapter_description', 'created', 'updated', 'last_synced'].includes(key)) {
+			} else if (['title', 'book_name', 'chapter_name', 'book_description', 'chapter_description', 'created', 'updated', 'last_synced', 'body_hash'].includes(key)) {
 				(frontmatter as any)[key] = value as any;
 			}
 		});
@@ -418,6 +425,9 @@ export default class BookStackSyncPlugin extends Plugin {
 		fm += `created: ${metadata.created ?? ''}\n`;
 		fm += `updated: ${metadata.updated ?? ''}\n`;
 		fm += `last_synced: ${metadata.last_synced ?? ''}\n`;
+		if (metadata.body_hash) {
+			fm += `body_hash: ${metadata.body_hash}\n`;
+		}
 		fm += '---\n\n';
 		return fm;
 	}
@@ -480,6 +490,19 @@ export default class BookStackSyncPlugin extends Plugin {
 		}
 
 		return body;
+	}
+
+	hashBody(body: string): string {
+		// Trim before hashing so leading/trailing whitespace differences
+		// (e.g. the extra newline extractFrontmatter captures after ---)
+		// never cause a false hash mismatch between write and read.
+		const normalized = body.trim();
+		let hash = 5381;
+		for (let i = 0; i < normalized.length; i++) {
+			hash = ((hash << 5) + hash) ^ normalized.charCodeAt(i);
+			hash = hash >>> 0;
+		}
+		return hash.toString(16).padStart(8, '0');
 	}
 
 	async syncBooks() {
@@ -707,13 +730,19 @@ export default class BookStackSyncPlugin extends Plugin {
 				'book'
 			);
 
+			// FIX 8: Track all remote page IDs to detect orphaned local files.
+			const remotePageIds = new Set<number>();
+
 			for (const content of book.contents) {
 				if (content.type === 'chapter') {
+					const chapter = await this.getChapter(content.id);
+					chapter.pages?.forEach(p => remotePageIds.add(p.id));
 					const result = await this.pullChapter(content.id, bookPath, book as BookDetail);
 					pulled += result.pulled;
 					skipped += result.skipped;
 					errors += result.errors;
 				} else if (content.type === 'page') {
+					remotePageIds.add(content.id);
 					const result = await this.pullPageSync(content.id, bookPath, book as BookDetail);
 					switch (result) {
 						case 'pulled': pulled++; break;
@@ -722,6 +751,11 @@ export default class BookStackSyncPlugin extends Plugin {
 					}
 				}
 			}
+
+			// FIX 8: Retire orphaned local pages deleted from BookStack.
+			const retired = await this.retireDeletedPages(bookPath, remotePageIds);
+			if (retired > 0) console.log(`[BookStack] Retired ${retired} deleted page(s) from book ${bookId}`);
+
 		} catch (error) {
 			this.handleSyncError(`Failed to pull book ${bookId}`, error);
 			errors++;
@@ -781,8 +815,13 @@ export default class BookStackSyncPlugin extends Plugin {
 				'book'
 			);
 
+			// FIX 8: Track all remote page IDs to detect orphaned local files.
+			const remotePageIds = new Set<number>();
+
 			for (const content of book.contents) {
 				if (content.type === 'chapter') {
+					const chapter = await this.getChapter(content.id);
+					chapter.pages?.forEach(p => remotePageIds.add(p.id));
 					const result = await this.syncChapterBidirectional(content.id, bookPath, book as BookDetail);
 					pulled += result.pulled;
 					pushed += result.pushed;
@@ -790,6 +829,7 @@ export default class BookStackSyncPlugin extends Plugin {
 					skipped += result.skipped;
 					errors += result.errors;
 				} else if (content.type === 'page') {
+					remotePageIds.add(content.id);
 					const result = await this.syncPageBidirectional(content.id, bookPath, book as BookDetail);
 					switch (result) {
 						case 'pulled': pulled++; break;
@@ -805,6 +845,11 @@ export default class BookStackSyncPlugin extends Plugin {
 			const localResult = await this.syncLocalPages(bookPath, book as BookDetail);
 			created += localResult.created;
 			errors += localResult.errors;
+
+			// FIX 8: Retire orphaned local pages deleted from BookStack.
+			const retired = await this.retireDeletedPages(bookPath, remotePageIds);
+			if (retired > 0) console.log(`[BookStack] Retired ${retired} deleted page(s) from book ${bookId}`);
+
 		} catch (error) {
 			this.handleSyncError(`Failed to sync book ${bookId}`, error);
 			errors++;
@@ -823,6 +868,13 @@ export default class BookStackSyncPlugin extends Plugin {
 				(id, parent) => this.findChapterFolderByChapterId(id, parent),
 				'chapter'
 			);
+
+			// FIX 4: Register the resolved folder path so handlePotentialNewChapter
+			// never mistakes this existing chapter for a new one on future syncs.
+			if (this.settings.knownChapterFolders[chapterPath] !== chapterId) {
+				this.settings.knownChapterFolders[chapterPath] = chapterId;
+				await this.saveSettings();
+			}
 
 			if (chapter.pages) {
 				for (const page of chapter.pages) {
@@ -852,6 +904,13 @@ export default class BookStackSyncPlugin extends Plugin {
 				(id, parent) => this.findChapterFolderByChapterId(id, parent),
 				'chapter'
 			);
+
+			// FIX 4: Keep the known-chapters map current so handlePotentialNewChapter
+			// never re-creates this chapter from a local folder on future syncs.
+			if (this.settings.knownChapterFolders[chapterPath] !== chapterId) {
+				this.settings.knownChapterFolders[chapterPath] = chapterId;
+				await this.saveSettings();
+			}
 
 			if (chapter.pages) {
 				for (const page of chapter.pages) {
@@ -885,6 +944,13 @@ export default class BookStackSyncPlugin extends Plugin {
 				(id, parent) => this.findChapterFolderByChapterId(id, parent),
 				'chapter'
 			);
+
+			// FIX 4: Keep the known-chapters map current so handlePotentialNewChapter
+			// never re-creates this chapter from a local folder on future syncs.
+			if (this.settings.knownChapterFolders[chapterPath] !== chapterId) {
+				this.settings.knownChapterFolders[chapterPath] = chapterId;
+				await this.saveSettings();
+			}
 
 			if (chapter.pages) {
 				for (const page of chapter.pages) {
@@ -983,11 +1049,14 @@ export default class BookStackSyncPlugin extends Plugin {
 						frontmatter.created = newPage.created_at;
 						frontmatter.updated = newPage.updated_at;
 						frontmatter.last_synced = new Date().toISOString();
+						// Trim body so the file, the hash, and future reads are all consistent.
+						// extractFrontmatter captures the extra \n after --- as part of body,
+						// so writing the raw body would accumulate blank lines on each sync.
+						const trimmedBody = body.trim();
+						frontmatter.body_hash = this.hashBody(trimmedBody);
 						frontmatter.title = file.basename;
 
-						// Reconstruct file with frontmatter + original body (not cleanedBody),
-						// so the local file is unchanged in structure — only the upload is cleaned.
-						const updatedContent = this.createFrontmatter(frontmatter) + body;
+						const updatedContent = this.createFrontmatter(frontmatter) + trimmedBody;
 						await this.app.vault.modify(file, updatedContent);
 						new Notice(`Created page in BookStack: ${file.basename}`);
 						created++;
@@ -1005,36 +1074,77 @@ export default class BookStackSyncPlugin extends Plugin {
 		return { created, errors };
 	}
 
+	// ─────────────────────────────────────────────────────────────
+	// FIX 4: handlePotentialNewChapter
+	//
+	// BEFORE: the code detected whether a folder already corresponded to
+	// a BookStack chapter by scanning every .md file inside it and reading
+	// its chapter_id frontmatter. This had two problems:
+	//   a) An empty folder (no .md files yet) would always look like a new
+	//      chapter and attempt to create one in BookStack on every sync run.
+	//   b) Any folder containing .md files without chapter_id frontmatter
+	//      (e.g. notes the user placed manually) would also trigger repeated
+	//      chapter creation attempts.
+	//
+	// AFTER: instead of scanning file frontmatter, we maintain a persisted
+	// map `knownChapterFolders` in plugin settings (saved to disk via
+	// saveSettings). The key is the folder's full vault-relative path;
+	// the value is the BookStack chapter ID.
+	//
+	// On every call we check this map first. If the folder path is already
+	// registered, we skip creation entirely — no file scanning needed.
+	// When we do create a new chapter, we immediately register the folder
+	// path in the map and persist it, so future syncs won't re-create it.
+	//
+	// No extra files are created in the vault. The map lives exclusively
+	// in plugin data alongside the rest of the settings.
+	// ─────────────────────────────────────────────────────────────
 	async handlePotentialNewChapter(folder: TFolder, book: BookDetail): Promise<void> {
 		const folderName = folder.name;
-		
-		let existingChapterId: number | null = null;
-		
+		const folderPath = folder.path;
+
+		// FIX 4: Check the persisted map first — no file scanning required.
+		// If this folder path is already registered, it was created in a
+		// previous sync run. Skip it entirely.
+		const knownChapterId = this.settings.knownChapterFolders[folderPath];
+		if (knownChapterId !== undefined) {
+			console.log(`[BookStack] Known chapter folder: ${folderPath} (ID: ${knownChapterId})`);
+			return;
+		}
+
+		// Folder is not in the map. Check file frontmatter as a secondary
+		// guard — handles the case where the map was cleared or the plugin
+		// was reinstalled but files from a previous sync still exist.
 		for (const file of folder.children) {
 			if (file instanceof TFile && file.extension === 'md') {
-				const content = await this.app.vault.read(file);
-				const { frontmatter } = this.extractFrontmatter(content);
+				const frontmatter = await this.extractFrontmatterOnly(file);
 				if (frontmatter.chapter_id) {
-					existingChapterId = frontmatter.chapter_id;
-					break;
+					// Register it now so future syncs use the fast path
+					this.settings.knownChapterFolders[folderPath] = frontmatter.chapter_id;
+					await this.saveSettings();
+					console.log(`[BookStack] Retroactively registered chapter folder: ${folderPath} (ID: ${frontmatter.chapter_id})`);
+					return;
 				}
 			}
 		}
-		
-		if (!existingChapterId) {
-			try {
-				console.log(`Creating new chapter in BookStack: ${folderName}`);
-				const newChapter = await this.createChapter(book.id, folderName);
-				new Notice(`Created chapter in BookStack: ${folderName}`);
-				
-				const chapterResult = await this.syncLocalPages(folder.path, book, newChapter);
-				console.log(`Synced ${chapterResult.created} pages in new chapter ${folderName}`);
-			} catch (error) {
-				this.handleSyncError(`Failed to create chapter ${folderName}`, error);
-				new Notice(`Failed to create chapter: ${folderName}`);
-			}
-		} else {
-			console.log(`[BookStack] Existing chapter detected: ${folderName} (ID: ${existingChapterId})`);
+
+		// Neither the map nor any file frontmatter recognises this folder.
+		// This is a genuinely new chapter the user created locally.
+		try {
+			console.log(`[BookStack] Creating new chapter in BookStack: ${folderName}`);
+			const newChapter = await this.createChapter(book.id, folderName);
+			new Notice(`Created chapter in BookStack: ${folderName}`);
+
+			// FIX 4: Register immediately so the next sync (including the
+			// recursive syncLocalPages call below) treats this as known.
+			this.settings.knownChapterFolders[folderPath] = newChapter.id;
+			await this.saveSettings();
+
+			const chapterResult = await this.syncLocalPages(folder.path, book, newChapter);
+			console.log(`[BookStack] Synced ${chapterResult.created} pages in new chapter ${folderName}`);
+		} catch (error) {
+			this.handleSyncError(`Failed to create chapter ${folderName}`, error);
+			new Notice(`Failed to create chapter: ${folderName}`);
 		}
 	}
 
@@ -1085,9 +1195,20 @@ export default class BookStackSyncPlugin extends Plugin {
 
 			const localContent = await this.app.vault.read(existingFile);
 			const { frontmatter, body } = this.extractFrontmatter(localContent);
-			const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
-			const localModified = new Date(existingFile.stat.mtime);
-			const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + this.SYNC_TIME_BUFFER_MS));
+			// FIX 3: Use body hash to detect local changes, not mtime.
+			// If no hash is stored (file predates this fix), fall back to mtime
+			// so those files are not silently skipped forever.
+			const storedHash = frontmatter.body_hash;
+			const currentHash = this.hashBody(body);
+			let hasLocalChanges: boolean;
+			if (storedHash) {
+				hasLocalChanges = storedHash !== currentHash;
+			} else {
+				// Legacy fallback for files without a stored hash.
+				const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
+				const localModified = new Date(existingFile.stat.mtime);
+				hasLocalChanges = !!lastSynced && localModified.getTime() > lastSynced.getTime() + 2000;
+			}
 
 			if (hasLocalChanges) {
 				const cleanedBody = this.stripLeadingTitleFromBody(body, page.name);
@@ -1121,8 +1242,21 @@ export default class BookStackSyncPlugin extends Plugin {
 				const localContent = await this.app.vault.read(existingFile);
 				const { frontmatter, body } = this.extractFrontmatter(localContent);
 				const lastSynced = frontmatter.last_synced ? new Date(frontmatter.last_synced) : null;
+
+				// FIX 3: Use body hash to detect local changes, not mtime.
+				// If no hash is stored (file predates this fix), fall back to mtime
+				// vs last_synced so those files are not silently skipped forever.
+				const storedHash = frontmatter.body_hash;
+				const currentHash = this.hashBody(body);
+				// localModified is always computed — used by ConflictResolutionModal.
 				const localModified = new Date(existingFile.stat.mtime);
-				const hasLocalChanges = !!lastSynced && (localModified > new Date(lastSynced.getTime() + this.SYNC_TIME_BUFFER_MS));
+				let hasLocalChanges: boolean;
+				if (storedHash) {
+					hasLocalChanges = storedHash !== currentHash;
+				} else {
+					// Legacy fallback for files without a stored hash.
+					hasLocalChanges = !!lastSynced && localModified.getTime() > lastSynced.getTime() + 2000;
+				}
 
 				if (hasLocalChanges && lastSynced) {
 					if (remoteUpdated > lastSynced) {
@@ -1215,13 +1349,18 @@ export default class BookStackSyncPlugin extends Plugin {
 			updated: page.updated_at,
 			last_synced: new Date().toISOString()
 		};
+		// body_hash is assigned below after trimming, so the hash and file contents are always in sync.
 
 		if (chapter) {
 			metadata.chapter_name = chapter.name;
 			metadata.chapter_description = chapter.description;
 		}
 
-		const fullContent = this.createFrontmatter(metadata) + content;
+		// Trim content so the stored hash and file body are always consistent,
+		// regardless of what exportPageMarkdown or htmlToMarkdown return.
+		const trimmedContent = content.trim();
+		metadata.body_hash = this.hashBody(trimmedContent);
+		const fullContent = this.createFrontmatter(metadata) + trimmedContent;
 		await this.createOrUpdateFile(filePath, fullContent);
 	}
 
@@ -1240,8 +1379,62 @@ export default class BookStackSyncPlugin extends Plugin {
 
 	async updateLocalSyncTime(file: TFile, frontmatter: PageFrontmatter, body: string): Promise<void> {
 		frontmatter.last_synced = new Date().toISOString();
-		const fullContent = this.createFrontmatter(frontmatter) + body;
+		// Trim body before writing: extractFrontmatter captures the extra \n
+		// after the closing --- as part of body, so without trimming each
+		// push cycle would prepend another blank line to the file content.
+		const trimmedBody = body.trim();
+		// FIX 3: Hash the trimmed body — consistent with hashBody() which
+		// also trims, and with what will be read back on the next sync.
+		frontmatter.body_hash = this.hashBody(trimmedBody);
+		const fullContent = this.createFrontmatter(frontmatter) + trimmedBody;
 		await this.app.vault.modify(file, fullContent);
+	}
+
+	// ─────────────────────────────────────────────────────────────
+	// FIX 8: retireDeletedPages
+	//
+	// After a pull or bidirectional sync, scans the book folder (and its
+	// chapter subfolders) for .md files whose bookstack_id frontmatter
+	// value is NOT in remotePageIds — the set of IDs returned by the API.
+	// Such files represent pages deleted from BookStack that are now orphaned
+	// locally. They are moved to BookStack/_deleted/ rather than silently
+	// removed, giving the user a chance to recover content.
+	//
+	// Only runs for pull-only and bidirectional syncs. Push-only does not
+	// download the remote page list so cannot reliably detect deletions.
+	// ─────────────────────────────────────────────────────────────
+	async retireDeletedPages(bookFolderPath: string, remotePageIds: Set<number>): Promise<number> {
+		let retired = 0;
+		const deletedFolderPath = `${this.settings.syncFolder}/_deleted`;
+		await this.ensureFolderExists(deletedFolderPath);
+
+		const scanFolder = async (folderPath: string) => {
+			const folder = this.app.vault.getAbstractFileByPath(folderPath);
+			if (!(folder instanceof TFolder)) return;
+
+			for (const item of folder.children) {
+				if (item instanceof TFolder) {
+					await scanFolder(item.path);
+				} else if (item instanceof TFile && item.extension === 'md') {
+					if (this.shouldSkipFile(item)) continue;
+					try {
+						const frontmatter = await this.extractFrontmatterOnly(item);
+						if (frontmatter.bookstack_id && !remotePageIds.has(frontmatter.bookstack_id)) {
+							const destPath = `${deletedFolderPath}/${item.name}`;
+							console.log(`[BookStack] Retiring deleted page: ${item.path} → ${destPath}`);
+							await this.app.fileManager.renameFile(item, destPath);
+							new Notice(`📦 Moved to _deleted/: ${item.basename} (removed from BookStack)`);
+							retired++;
+						}
+					} catch (err) {
+						console.error(`[BookStack] Error checking file for deletion: ${item.path}`, err);
+					}
+				}
+			}
+		};
+
+		await scanFolder(bookFolderPath);
+		return retired;
 	}
 
 	async ensureFolderExists(path: string) {
