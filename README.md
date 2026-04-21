@@ -44,8 +44,8 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 1. One for the BookStack Token ID
 2. One for the Bookstack Token Secret
 Give them clear names (only lowercase characters and dashes are accepted). Example :
-* bookstack-token-id
-* bookstack-token-secret
+  * bookstack-token-id
+  * bookstack-token-secret
 
 ### 3. Select Books
 1. Command Palette → "NoteStack: Select Books to Sync"
