@@ -13,6 +13,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 - **Mobile Support** - Full Android and iOS compatibility
 - **Secure Credentials** - Uses Obsidian's SecretStorage API
 - **Markdown Conversion** - Automatic HTML-to-Markdown conversion with fallback
+- **Smart Cleanup** - Content deleted from BookStack and deselected books or chapters are automatically sent to Obsidian trash on the next sync
 
 ## Installation
 
@@ -172,6 +173,14 @@ npm run build        # Production build
 You can review my test matrix [here](https://github.com/john-ee/notestack/blob/main/TEST_MATRIX.md).
 
 ## Changelog
+
+### v0.0.8
+
+- Fixed duplicate title that were uploaded to BookStack (syncLocalPages)
+- Folder rename moves to vault root instead of renaming in place (findOrCreateFolderWithRename)
+- Added a change detection by hash instead of sync time.
+- New chapter re-created on every sync, replaced with persisted knownChapterFolders map
+- Deleted pages and deselected chapters and books now sent to Obsidian trash
 
 ### v0.0.7
 - Synchronize at the chapter level instead of synchronizing the full book
