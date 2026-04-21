@@ -560,6 +560,7 @@ export default class BookStackSyncPlugin extends Plugin {
 		
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
+		await this.retireDeselectedContent();
 		
 		let pullCount = 0;
 		let skipCount = 0;
@@ -612,6 +613,7 @@ export default class BookStackSyncPlugin extends Plugin {
 		
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
+		await this.retireDeselectedContent();
 		
 		let pushCount = 0;
 		let createCount = 0;
@@ -667,6 +669,7 @@ export default class BookStackSyncPlugin extends Plugin {
 		
 		const syncFolder = this.settings.syncFolder;
 		await this.ensureFolderExists(syncFolder);
+		await this.retireDeselectedContent();
 		
 		let pullCount = 0;
 		let pushCount = 0;
@@ -1391,6 +1394,95 @@ export default class BookStackSyncPlugin extends Plugin {
 	}
 
 	// ─────────────────────────────────────────────────────────────
+	// FIX 8b: retireDeselectedContent
+	//
+	// Called at the start of every sync. Scans the sync folder for book
+	// folders and chapter folders whose IDs are no longer present in
+	// syncSelection (i.e. the user unchecked them in the book selector).
+	//
+	// - An entire book folder is trashed when the book ID is absent from
+	//   syncSelection entirely.
+	// - A chapter folder is trashed when the book is in partial mode and
+	//   that chapter ID is no longer in the selected chapter list.
+	//
+	// Uses Obsidian's vault.trash() so the user's trash preference is
+	// respected. Runs for all sync modes so deselected content is always
+	// cleaned up regardless of sync direction.
+	// ─────────────────────────────────────────────────────────────
+	async retireDeselectedContent(): Promise<void> {
+		const syncFolder = this.settings.syncFolder;
+		const root = this.app.vault.getAbstractFileByPath(syncFolder);
+		if (!(root instanceof TFolder)) return;
+
+		const selectedBookIds = new Set(
+			Object.keys(this.settings.syncSelection).map(Number)
+		);
+
+		// Snapshot before iterating — vault.trash() mutates the live children array.
+		const bookFolders = [...root.children];
+		for (const bookFolder of bookFolders) {
+			if (!(bookFolder instanceof TFolder)) continue;
+
+			// Identify the book this folder belongs to by reading any file inside it.
+			const bookId = await this.getBookIdFromFolder(bookFolder);
+			if (bookId === null) continue; // unrecognised folder, leave it alone
+
+			if (!selectedBookIds.has(bookId)) {
+				// Entire book deselected — trash the whole folder.
+				console.log(`[BookStack] Trashing deselected book folder: ${bookFolder.path}`);
+				await this.app.vault.trash(bookFolder, true);
+				new Notice(`🗑️ Trashed: ${bookFolder.name} (book removed from sync)`);
+				continue;
+			}
+
+			const selection = this.settings.syncSelection[bookId];
+			if (selection.mode === 'full') continue; // all chapters kept
+
+			// Partial selection — snapshot chapter children before iterating.
+			const selectedChapterIds = new Set(selection.chapterIds ?? []);
+			const chapterFolders = [...bookFolder.children];
+			for (const chapterFolder of chapterFolders) {
+				if (!(chapterFolder instanceof TFolder)) continue;
+
+				const chapterId = await this.getChapterIdFromFolder(chapterFolder);
+				if (chapterId === null) continue;
+
+				if (!selectedChapterIds.has(chapterId)) {
+					console.log(`[BookStack] Trashing deselected chapter folder: ${chapterFolder.path}`);
+					await this.app.vault.trash(chapterFolder, true);
+					new Notice(`🗑️ Trashed: ${chapterFolder.name} (chapter removed from sync)`);
+				}
+			}
+		}
+	}
+
+	// Read the book_id from the first .md file found in a folder tree.
+	private async getBookIdFromFolder(folder: TFolder): Promise<number | null> {
+		for (const item of folder.children) {
+			if (item instanceof TFile && item.extension === 'md') {
+				const fm = await this.extractFrontmatterOnly(item);
+				if (fm.book_id != null) return fm.book_id;
+			}
+			if (item instanceof TFolder) {
+				const result = await this.getBookIdFromFolder(item);
+				if (result !== null) return result;
+			}
+		}
+		return null;
+	}
+
+	// Read the chapter_id from the first .md file found directly in a folder.
+	private async getChapterIdFromFolder(folder: TFolder): Promise<number | null> {
+		for (const item of folder.children) {
+			if (item instanceof TFile && item.extension === 'md') {
+				const fm = await this.extractFrontmatterOnly(item);
+				if (fm.chapter_id != null) return fm.chapter_id;
+			}
+		}
+		return null;
+	}
+
+	// ─────────────────────────────────────────────────────────────
 	// FIX 8: retireDeletedPages
 	//
 	// After a pull or bidirectional sync, scans the book folder (and its
@@ -1422,7 +1514,7 @@ export default class BookStackSyncPlugin extends Plugin {
 							// Use Obsidian's built-in trash, which respects the user's
 							// vault setting (system trash or .trash folder).
 							await this.app.vault.trash(item, true);
-							new Notice(`Trashed: ${item.basename} (removed from BookStack)`);
+							new Notice(`🗑️ Trashed: ${item.basename} (removed from BookStack)`);
 							retired++;
 						}
 					} catch (err) {
