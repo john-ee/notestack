@@ -40,12 +40,7 @@ Bidirectional synchronization between BookStack and Obsidian. Turn your BookStac
 3. Create/select secrets for Token ID and Token Secret
 4. Choose sync folder (default: `BookStack`)
 
-**Note :** You need 2 secrets in the Obsidian Keychain :
-1. One for the BookStack Token ID
-2. One for the Bookstack Token Secret
-Give them clear names (only lowercase characters and dashes are accepted). Example :
-  * bookstack-token-id
-  * bookstack-token-secret
+**Note :** You need 2 secrets in the Obsidian Keychain :the BookStack Token ID and the Bookstack Token Secret. Give them clear names (only lowercase characters and dashes are accepted). Example : bookstack-token-id and bookstack-token-secret
 
 ### 3. Select Books
 1. Command Palette → "NoteStack: Select Books to Sync"
